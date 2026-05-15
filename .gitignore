@@ -1,0 +1,23 @@
+# 라이브러리 배포본 (각자 Arduino Library Manager에서 설치)
+*.zip
+
+# Arduino IDE 빌드 산출물
+build/
+*.bin
+*.elf
+*.hex
+*.map
+*.d
+*.o
+
+# IDE / 에디터 설정
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+
+# OS 파일
+Thumbs.db
+.DS_Store
+desktop.ini
