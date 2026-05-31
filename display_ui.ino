@@ -1015,16 +1015,33 @@ static void onEditPush() {
 // 초기화
 // ──────────────────────────────────────────────────────────────
 static void initTft() {
-    pinMode(PIN_TFT_BL, OUTPUT);
-    digitalWrite(PIN_TFT_BL, HIGH);
+    // setup()에서 이미 panel 핀들을 OUTPUT/idle 상태로 고정해두었음.
+    // 여기서는 cold reset 펄스 후 panel init.
+    Serial.println("[TFT] step1: BL off");
+    digitalWrite(PIN_TFT_BL, LOW);
 
-    // FSPI 핀 명시 — 보드 변종 상관없이 동일 핀 보장
+    // RST 명시 펄스 — panel 컨트롤러 cold reset (panic 후 잠긴 state 해제)
+    digitalWrite(PIN_TFT_RST, HIGH); delay(50);
+    digitalWrite(PIN_TFT_RST, LOW);  delay(100);
+    digitalWrite(PIN_TFT_RST, HIGH); delay(300);
+    Serial.println("[TFT] step2: RST pulse done");
+
+    // FSPI 핀 명시 — ESP32-S3 IO-MUX 직결 최고 속도 보장
     SPI.begin(PIN_TFT_SCK, /*MISO 미사용*/ -1, PIN_TFT_MOSI);
+    Serial.println("[TFT] step3: SPI.begin");
 
     tft.init(240, 320);
-    tft.setSPISpeed(40000000);
-    tft.setRotation(3);               // 180° 회전 (기존 1 → 3)
+    Serial.println("[TFT] step4: tft.init OK");
+
+    // SPI 26MHz로 보수적 시작 (안정 확인 후 40MHz 상향 가능)
+    tft.setSPISpeed(26000000);
+    tft.setRotation(3);               // 디스플레이 보드 장착 방향 180° 회전
     tft.fillScreen(COL_BG);
+    Serial.println("[TFT] step5: panel cleared (26MHz, rot=3)");
+
+    // panel을 검정으로 클리어한 후 백라이트 ON — 흰 잔상 방지
+    digitalWrite(PIN_TFT_BL, HIGH);
+    Serial.println("[TFT] step6: BL on — ready");
 
     // U8g2 한글 폰트 엔진 — 같은 tft 객체에 부착
     u8g2.begin(tft);

@@ -3,6 +3,17 @@
  * 아날로그 필름 로터리 프로세서 펌웨어 v3.1
  * Analog Film Development Rotary Processor Firmware v3.1
  *
+ * [v3.1.1 패치] — panel 보호 / 안정성
+ *   - 부팅 시퀀스에서 panel 신호 핀(TFT_CS/DC/RST/SCK/MOSI/BL)을 가장
+ *     먼저 OUTPUT + idle 레벨로 고정 → floating noise로 인한 panel
+ *     컨트롤러 stress/사망 예방 (이전 디버깅에서 panic 후 panel 사망 사례)
+ *   - EC11/KO 입력 핀도 즉시 INPUT_PULLUP 설정 → 부팅 floating 차단
+ *   - LittleFS 마운트 실패 시 자동 format → 재마운트 로직
+ *   - LittleFS partition 진단 메시지 (spiffs subtype 발견 여부 출력)
+ *   - 부팅 시 reset reason / free heap 진단 출력
+ *   - 16MB Flash 보드용 partitions.csv 추가 (3MB APP × 2 + 9.9MB LittleFS)
+ *   - TWDT reconfigure 분기 (Arduino core 자동 init 중복 호출 방지)
+ *
  * [v3.0 → v3.1 변경사항] — 화면보호기 (Screensaver)
  *   - 무입력 감지: 매 입력(인코더/버튼)마다 g_lastInputMs 갱신
  *     · saverOn=true 이고 (now - g_lastInputMs) >= saverSec * 1000ms → PAGE_SCREENSAVER 진입
@@ -132,6 +143,7 @@
 #include <LittleFS.h>
 #include <vector>
 #include <esp_task_wdt.h>     // 루프/태스크 워치독
+#include <esp_partition.h>   // partition 진단 (LittleFS 마운트 실패 시)
 #include <cstdlib>            // std::abs(int64_t)
 
 // ──────────────────────────────────────────────────────────────
@@ -1741,11 +1753,42 @@ void setupRoutes() {
 // setup()
 // ──────────────────────────────────────────────────────────────
 void setup() {
-    Serial.begin(115200);
-    delay(500);
-    Serial.println("\n[Film Processor v2.2] 초기화 시작");
+    // ──────────────────────────────────────────────────────────────
+    // 1) panel 핀 floating 방지 (★ panel 컨트롤러 보호 — 최우선 실행)
+    // ──────────────────────────────────────────────────────────────
+    // ESP32-S3 부팅 직후 ~50ms 동안 GPIO는 모두 floating.
+    // 그 사이 panel은 VCC를 받고 있으므로 CS/DC/RST가 floating 시 noise를
+    // 포착해 panel이 비정상 state로 진입. 반복되면 컨트롤러 ESD/latch-up
+    // 손상 누적으로 영구 사망 가능. 부팅 시퀀스에서 가장 먼저 모든 panel
+    // 신호 핀을 안전한 idle 레벨로 고정한다.
+    pinMode(PIN_TFT_CS,   OUTPUT); digitalWrite(PIN_TFT_CS,   HIGH);   // CS idle
+    pinMode(PIN_TFT_DC,   OUTPUT); digitalWrite(PIN_TFT_DC,   HIGH);   // data 모드 idle
+    pinMode(PIN_TFT_RST,  OUTPUT); digitalWrite(PIN_TFT_RST,  HIGH);   // reset 해제
+    pinMode(PIN_TFT_BL,   OUTPUT); digitalWrite(PIN_TFT_BL,   LOW);    // BL OFF (init 후 ON)
+    pinMode(PIN_TFT_SCK,  OUTPUT); digitalWrite(PIN_TFT_SCK,  LOW);    // SPI idle
+    pinMode(PIN_TFT_MOSI, OUTPUT); digitalWrite(PIN_TFT_MOSI, LOW);    // SPI idle
 
-    // TMC2209 EN 핀 초기화 (비활성 상태로 시작)
+    // EC11/KO 입력 핀도 INPUT_PULLUP으로 즉시 고정 (floating noise 방지)
+    pinMode(PIN_ENC_A,    INPUT_PULLUP);
+    pinMode(PIN_ENC_B,    INPUT_PULLUP);
+    pinMode(PIN_ENC_PUSH, INPUT_PULLUP);
+    pinMode(PIN_KEY_OK,   INPUT_PULLUP);
+
+    // ──────────────────────────────────────────────────────────────
+    // 2) 시리얼 초기화 — USB-CDC 안정화 시간 확보
+    // ──────────────────────────────────────────────────────────────
+    Serial.begin(115200);
+    delay(1000);
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("[BOOT] Film Processor v3.1 시작");
+    Serial.printf("[BOOT] reset reason: %d, free heap: %u\n",
+                  (int)esp_reset_reason(), (unsigned)ESP.getFreeHeap());
+    Serial.flush();
+
+    // ──────────────────────────────────────────────────────────────
+    // 3) TMC2209 / MAX31865 핀 초기화
+    // ──────────────────────────────────────────────────────────────
     pinMode(PIN_EN, OUTPUT);
     disableMotor();
 
@@ -1817,11 +1860,28 @@ void setup() {
         Serial.println("[STA] 미설정 (설정 페이지에서 홈 WiFi 입력 가능)");
     }
 
-    // LittleFS 초기화 (레시피 영구 저장)
-    // ※ Arduino IDE: Tools → Partition Scheme → "8MB Flash (3MB APP/1.5MB SPIFFS)" 선택 필요
-    // ※ formatOnFail=false: 마운트 실패 시 자동 포맷 금지 → 데이터 보호
+    // LittleFS 초기화 (레시피/화면보호기 이미지 영구 저장)
+    // ※ 16MB 보드: sketch 폴더의 partitions.csv가 9.9MB spiffs 영역 자동 할당
+    // 마운트 실패(첫 부팅 또는 파티션 손상) 시 진단 후 자동 format → 재마운트
     if (!LittleFS.begin(false)) {
-        Serial.println("[LittleFS] 마운트 실패 — 레시피 저장 불가 (수동 포맷 필요 시 begin(true) 1회 실행)");
+        Serial.println("[LittleFS] 1차 마운트 실패 — partition 진단:");
+        const esp_partition_t* sp = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+        if (sp) {
+            Serial.printf("[LittleFS] spiffs 파티션 발견: label='%s' size=%u KB offset=0x%X\n",
+                          sp->label, sp->size / 1024, sp->address);
+        } else {
+            Serial.println("[LittleFS] spiffs subtype 파티션 없음 — partitions.csv 미적용!");
+            Serial.println("[LittleFS] → Tools → Erase All Flash Before Sketch Upload = Enabled 후 재플래시");
+        }
+        Serial.println("[LittleFS] format() 시도...");
+        Serial.flush();
+        if (LittleFS.format() && LittleFS.begin(false)) {
+            Serial.printf("[LittleFS] 포맷 후 재마운트 성공 (여유 공간: %u KB)\n",
+                          LittleFS.totalBytes() / 1024);
+        } else {
+            Serial.println("[LittleFS] 포맷/재마운트 실패 — 저장 기능 비활성");
+        }
     } else {
         Serial.printf("[LittleFS] 마운트 성공 (여유 공간: %u KB)\n",
                       LittleFS.totalBytes() / 1024);
@@ -1856,14 +1916,17 @@ void setup() {
     g_cmdQueue = xQueueCreate(8, sizeof(Cmd));
 
     // 태스크 워치독 — loop 또는 tempTask가 6초 이상 응답 없으면 시스템 리셋
+    // ※ arduino-esp32 v3.x는 Arduino core가 자동으로 TWDT init.
+    //    재호출 시 "TWDT already initialized" 에러. reconfigure로 분기.
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    // arduino-esp32 v3.x: config 구조체 기반
     esp_task_wdt_config_t wdtCfg = {
         .timeout_ms     = 6000,
         .idle_core_mask = 0,
         .trigger_panic  = true,
     };
-    esp_task_wdt_init(&wdtCfg);
+    if (esp_task_wdt_reconfigure(&wdtCfg) == ESP_ERR_INVALID_STATE) {
+        esp_task_wdt_init(&wdtCfg);
+    }
 #else
     // arduino-esp32 v2.x: (timeout_sec, panic)
     esp_task_wdt_init(6, true);

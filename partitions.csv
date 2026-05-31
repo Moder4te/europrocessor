@@ -1,0 +1,11 @@
+# ──────────────────────────────────────────────────────────────
+# Custom partition table — ESP32-S3 N16R8 (16MB Flash)
+#   3MB APP × 2 (OTA 지원) + 9.9MB LittleFS
+#   라벨 "spiffs" — LittleFS.begin()의 기본 partition_label 과 일치
+# ──────────────────────────────────────────────────────────────
+# Name,     Type, SubType,  Offset,   Size,    Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x300000,
+app1,       app,  ota_1,    0x310000, 0x300000,
+spiffs,     data, spiffs,   0x610000, 0x9F0000,
