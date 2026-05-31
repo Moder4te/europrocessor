@@ -1,7 +1,19 @@
 /*
  * ================================================================
- * 아날로그 필름 로터리 프로세서 펌웨어 v3.0
- * Analog Film Development Rotary Processor Firmware v3.0
+ * 아날로그 필름 로터리 프로세서 펌웨어 v3.1
+ * Analog Film Development Rotary Processor Firmware v3.1
+ *
+ * [v3.0 → v3.1 변경사항] — 화면보호기 (Screensaver)
+ *   - 무입력 감지: 매 입력(인코더/버튼)마다 g_lastInputMs 갱신
+ *     · saverOn=true 이고 (now - g_lastInputMs) >= saverSec * 1000ms → PAGE_SCREENSAVER 진입
+ *   - 메뉴 항목: Saver ON/OFF, Saver Time (10~3600s 인코더 편집)
+ *   - 영구 저장: Preferences "ui" 네임스페이스 (svOn, svSec)
+ *   - 웹 UI: /api/saver/settings (GET/POST), /api/saver/image (POST upload, DELETE)
+ *     · 설정 페이지에 화면보호기 카드 추가 (활성화 토글, 30s~30min 프리셋, 이미지 업로드)
+ *   - 디스플레이 표시: /saver.gif > /saver.jpg > 텍스트 폴백 순
+ *     · JPEG: TJpg_Decoder 16x16 블록 콜백
+ *     · GIF : AnimatedGIF 라인 단위 콜백 + playFrame 라이브 루프
+ *   - 인코더 부호 반전 원복 (사용자 요청)
  *
  * [v2.2 → v3.0 변경사항] — 디스플레이 UI 전면 개편 (display_ui.ino)
  *   - STATUS 페이지 깜빡임(flicker) 제거
@@ -87,6 +99,8 @@
  *   - Adafruit GFX       (Library Manager)
  *   - Adafruit ST7789    (Library Manager — TFT 디스플레이)
  *   - U8g2_for_Adafruit_GFX (Library Manager — 한글 UTF-8 폰트)
+ *   - TJpg_Decoder       (Library Manager — JPEG 화면보호기, Bodmer)
+ *   - AnimatedGIF        (Library Manager — GIF 화면보호기, bitbank2)
  *
  * ──────────────────────────────────────────────────────────────
  * [핀 배정]
@@ -309,6 +323,10 @@ const IPAddress AP_SUB(255,255,255,0);
 // Arduino IDE 자동 프로토타입 생성이 멀티 .ino를 놓치는 경우 대비
 // ──────────────────────────────────────────────────────────────
 void startDisplayTask();
+bool saverGetEnabled();
+int  saverGetTimeoutSec();
+void saverSetEnabled(bool en);
+void saverSetTimeoutSec(int s);
 
 // ──────────────────────────────────────────────────────────────
 // 모터 제어 헬퍼
@@ -1041,8 +1059,38 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <div style="margin-top:7px;font-size:12px;color:var(--muted);" id="lang-hint"></div>
   </div>
   <div class="card">
+    <div class="card-title" data-i18n="saver_title"></div>
+    <div class="toggle-row" style="margin-bottom:10px;">
+      <span style="font-size:14px;" data-i18n="saver_enable"></span>
+      <label class="toggle">
+        <input type="checkbox" id="saver-en-chk" onchange="onSaverEnableToggle()">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+    <div class="form-grp">
+      <label class="form-lbl" data-i18n="saver_timeout"></label>
+      <select class="form-in" id="saver-timeout-sel" onchange="onSaverTimeoutChange()">
+        <option value="30">30 s</option>
+        <option value="60">60 s</option>
+        <option value="120">2 min</option>
+        <option value="300">5 min</option>
+        <option value="600">10 min</option>
+        <option value="1800">30 min</option>
+      </select>
+    </div>
+    <div class="form-grp">
+      <label class="form-lbl" data-i18n="saver_image"></label>
+      <input class="form-in" id="saver-file" type="file" accept="image/jpeg,image/gif">
+      <div style="display:flex;gap:7px;margin-top:7px;">
+        <button class="btn btn-primary btn-sm" onclick="uploadSaverImage()" data-i18n="saver_upload"></button>
+        <button class="btn btn-outline btn-sm" onclick="deleteSaverImage()" data-i18n="saver_delete"></button>
+      </div>
+      <div id="saver-status" style="margin-top:7px;font-size:12px;color:var(--muted);"></div>
+    </div>
+  </div>
+  <div class="card">
     <div class="card-title" data-i18n="about"></div>
-    <div class="info-row"><span>Firmware</span><span class="info-val">v2.2</span></div>
+    <div class="info-row"><span>Firmware</span><span class="info-val">v3.0</span></div>
     <div class="info-row"><span>MCU</span><span class="info-val">ESP32-S3</span></div>
     <div class="info-row"><span>Driver</span><span class="info-val">TMC2209 (Stepper)</span></div>
     <div class="info-row"><span>Temp</span><span class="info-val">MAX31865 + PT100</span></div>
@@ -1099,6 +1147,10 @@ const STR={
     net_status:'네트워크 상태',ap_ip:'AP IP (직접 접속)',
     home_wifi:'홈 WiFi',sta_conn:'연결됨 ✓',sta_disconn:'미연결',home_ip:'홈 WiFi IP',
     language:'언어 설정',lang_hint:'현재: 한국어',about:'디바이스 정보',
+    saver_title:'화면보호기',saver_enable:'활성화',saver_timeout:'진입 대기 시간',
+    saver_image:'배경 이미지 (JPEG / GIF)',saver_upload:'업로드',saver_delete:'삭제',
+    saver_ok:'업로드 완료',saver_fail:'업로드 실패',saver_none:'이미지 없음',
+    saver_has:'설정됨',saver_choose:'파일을 먼저 선택해주세요.',
     ph_step_name:'단계 이름',lbl_power:'속도(RPM)',lbl_dur:'시간(초)',lbl_rot:'방향전환(초)',
     confirm_del:'이 레시피를 삭제하시겠습니까?',
     confirm_run:'레시피를 실행합니다. 현재 동작이 중단됩니다.',
@@ -1133,6 +1185,10 @@ const STR={
     net_status:'Network Status',ap_ip:'AP IP (Direct)',
     home_wifi:'Home WiFi',sta_conn:'Connected ✓',sta_disconn:'Not connected',home_ip:'Home WiFi IP',
     language:'Language',lang_hint:'Current: English',about:'Device Info',
+    saver_title:'Screensaver',saver_enable:'Enabled',saver_timeout:'Idle Timeout',
+    saver_image:'Background Image (JPEG / GIF)',saver_upload:'Upload',saver_delete:'Delete',
+    saver_ok:'Upload complete',saver_fail:'Upload failed',saver_none:'No image set',
+    saver_has:'Image set',saver_choose:'Please pick a file first.',
     ph_step_name:'Step name',lbl_power:'Speed(RPM)',lbl_dur:'Duration(s)',lbl_rot:'Rotation(s)',
     confirm_del:'Delete this recipe?',
     confirm_run:'Run recipe? Current operation will stop.',
@@ -1357,10 +1413,50 @@ function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 async function postJ(url,d){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});}
 
+// ─── 화면보호기 ───
+async function loadSaver(){
+  try{
+    const r=await fetch('/api/saver/settings');
+    if(!r.ok)return;
+    const d=await r.json();
+    document.getElementById('saver-en-chk').checked=!!d.enabled;
+    document.getElementById('saver-timeout-sel').value=String(d.timeoutSec||60);
+    const st=document.getElementById('saver-status');
+    if(d.imageType==='gif')      st.textContent=t('saver_has')+' (GIF, '+Math.ceil(d.imageSize/1024)+' KB)';
+    else if(d.imageType==='jpg') st.textContent=t('saver_has')+' (JPEG, '+Math.ceil(d.imageSize/1024)+' KB)';
+    else                          st.textContent=t('saver_none');
+  }catch{}
+}
+async function pushSaver(payload){
+  await fetch('/api/saver/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+}
+function onSaverEnableToggle(){
+  pushSaver({enabled:document.getElementById('saver-en-chk').checked});
+}
+function onSaverTimeoutChange(){
+  pushSaver({timeoutSec:parseInt(document.getElementById('saver-timeout-sel').value,10)});
+}
+async function uploadSaverImage(){
+  const inp=document.getElementById('saver-file');
+  if(!inp.files||!inp.files[0]){alert(t('saver_choose'));return;}
+  const fd=new FormData();fd.append('image',inp.files[0]);
+  const st=document.getElementById('saver-status');
+  st.textContent='...';
+  try{
+    const r=await fetch('/api/saver/image',{method:'POST',body:fd});
+    if(r.ok){st.textContent=t('saver_ok');loadSaver();}
+    else    {st.textContent=t('saver_fail');}
+  }catch{st.textContent=t('saver_fail');}
+}
+async function deleteSaverImage(){
+  await fetch('/api/saver/image',{method:'DELETE'});
+  loadSaver();
+}
+
 window.addEventListener('DOMContentLoaded',async ()=>{
   applyLang();
   recipes=await loadR();   // 보드 플래시에서 레시피 로드
-  renderCatTabs();renderRecipeList();loadSettings();fetchStatus();onCycleToggle();
+  renderCatTabs();renderRecipeList();loadSettings();loadSaver();fetchStatus();onCycleToggle();
 });
 </script>
 </body>
@@ -1538,6 +1634,98 @@ void setupRoutes() {
             }
         }
     );
+
+    // ── 화면보호기 설정 GET ──
+    g_server.on("/api/saver/settings", HTTP_GET, [](AsyncWebServerRequest* req){
+        bool hasJpg = LittleFS.exists("/saver.jpg");
+        bool hasGif = LittleFS.exists("/saver.gif");
+        size_t imgSize = 0;
+        const char* imgType = "none";
+        if (hasGif) {
+            File f = LittleFS.open("/saver.gif", "r");
+            if (f) { imgSize = f.size(); f.close(); }
+            imgType = "gif";
+        } else if (hasJpg) {
+            File f = LittleFS.open("/saver.jpg", "r");
+            if (f) { imgSize = f.size(); f.close(); }
+            imgType = "jpg";
+        }
+        StaticJsonDocument<256> doc;
+        doc["enabled"]    = saverGetEnabled();
+        doc["timeoutSec"] = saverGetTimeoutSec();
+        doc["imageType"]  = imgType;
+        doc["imageSize"]  = (uint32_t)imgSize;
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // ── 화면보호기 설정 POST (enabled, timeoutSec) ──
+    g_server.on("/api/saver/settings", HTTP_POST,
+        [](AsyncWebServerRequest* req){}, nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len,
+           size_t index, size_t total){
+            static String buf;
+            if (index == 0) buf = "";
+            buf.concat((const char*)data, len);
+            if (index + len < total) return;
+
+            StaticJsonDocument<128> doc;
+            if (deserializeJson(doc, buf) != DeserializationError::Ok) {
+                req->send(400, "application/json", "{\"ok\":false}");
+                return;
+            }
+            if (doc.containsKey("enabled"))
+                saverSetEnabled(doc["enabled"].as<bool>());
+            if (doc.containsKey("timeoutSec"))
+                saverSetTimeoutSec(doc["timeoutSec"].as<int>());
+            req->send(200, "application/json", "{\"ok\":true}");
+        }
+    );
+
+    // ── 화면보호기 이미지 업로드 (multipart/form-data, name="image") ──
+    //   확장자(jpg/jpeg → /saver.jpg, gif → /saver.gif) 자동 판정
+    //   기존 다른 확장자 파일은 자동 삭제 (한 종류만 유지)
+    g_server.on("/api/saver/image", HTTP_POST,
+        [](AsyncWebServerRequest* req){
+            req->send(200, "application/json", "{\"ok\":true}");
+        },
+        [](AsyncWebServerRequest* req, String filename, size_t index,
+           uint8_t* data, size_t len, bool final){
+            static String savePath;
+            if (index == 0) {
+                String lo = filename; lo.toLowerCase();
+                if (lo.endsWith(".gif")) {
+                    savePath = "/saver.gif";
+                    if (LittleFS.exists("/saver.jpg")) LittleFS.remove("/saver.jpg");
+                } else if (lo.endsWith(".jpg") || lo.endsWith(".jpeg")) {
+                    savePath = "/saver.jpg";
+                    if (LittleFS.exists("/saver.gif")) LittleFS.remove("/saver.gif");
+                } else {
+                    savePath = "";  // 미지원 — 무시
+                    return;
+                }
+                File f = LittleFS.open(savePath, "w");
+                if (f) f.close();   // 비우기
+                Serial.printf("[Saver] upload start: %s (%s)\n",
+                              filename.c_str(), savePath.c_str());
+            }
+            if (savePath.length() == 0) return;
+            File f = LittleFS.open(savePath, "a");
+            if (f) { f.write(data, len); f.close(); }
+            if (final) {
+                Serial.printf("[Saver] upload done: %u bytes\n", (unsigned)(index + len));
+            }
+        }
+    );
+
+    // ── 화면보호기 이미지 삭제 ──
+    g_server.on("/api/saver/image", HTTP_DELETE, [](AsyncWebServerRequest* req){
+        bool removed = false;
+        if (LittleFS.exists("/saver.jpg")) { LittleFS.remove("/saver.jpg"); removed = true; }
+        if (LittleFS.exists("/saver.gif")) { LittleFS.remove("/saver.gif"); removed = true; }
+        req->send(200, "application/json",
+                  removed ? "{\"ok\":true}" : "{\"ok\":true,\"noop\":true}");
+    });
 
     // CORS preflight: 브라우저가 실제 요청 전에 보내는 OPTIONS를 200으로 응답
     g_server.onNotFound([](AsyncWebServerRequest* req){

@@ -31,6 +31,9 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <U8g2_for_Adafruit_GFX.h>
+#include <TJpg_Decoder.h>          // JPEG 화면보호기
+#include <AnimatedGIF.h>           // 애니메이션 GIF 화면보호기
+#include <LittleFS.h>
 #include <SPI.h>
 
 // ──────────────────────────────────────────────────────────────
@@ -98,14 +101,13 @@ static void IRAM_ATTR encISR() {
     g_encAccum += ENC_TABLE[g_encState];
 }
 
-// 부호 반전: 화면 180° 회전 보정용
+// 회전 방향: 물리 시계방향이 UI "다음" 항목 (사용자 요청으로 반전 해제)
 static int8_t popEncoderSteps() {
     noInterrupts();
     int16_t acc   = g_encAccum;
     int16_t steps = acc / 4;
     g_encAccum    = acc - (steps * 4);
     interrupts();
-    steps = -steps;                       // ← 회전 방향 반전
     if (steps >  127) steps =  127;
     if (steps < -128) steps = -128;
     return (int8_t)steps;
@@ -148,15 +150,53 @@ enum UiPage : uint8_t {
     PAGE_MENU,           // 수동 컨트롤 메뉴
     PAGE_EDIT_SPEED,
     PAGE_EDIT_ROTSEC,
+    PAGE_EDIT_SAVER_SEC, // 화면보호기 진입 대기 시간 편집
     PAGE_INFO,
+    PAGE_SCREENSAVER,    // 일정 시간 무입력 시 자동 진입
 };
 
 struct UiSettings {
-    int  rpm    = 50;
-    int  rotSec = 30;
-    bool fwd    = true;
-    bool cycle  = true;
+    int  rpm        = 50;
+    int  rotSec     = 30;
+    bool fwd        = true;
+    bool cycle      = true;
+    bool saverOn    = true;        // 화면보호기 활성화
+    int  saverSec   = 60;          // 무입력 후 진입까지 (초)
 } g_uiSet;
+
+// 무입력 추적 — 어떤 입력이든 들어오면 millis()로 갱신
+static uint32_t g_lastInputMs = 0;
+static inline void touchInput() { g_lastInputMs = millis(); }
+
+// 화면보호기 영구 저장 (Preferences "ui" 네임스페이스)
+static void loadSaverPrefs() {
+    Preferences p;
+    if (p.begin("ui", true)) {
+        g_uiSet.saverOn  = p.getBool("svOn",  true);
+        g_uiSet.saverSec = p.getInt ("svSec", 60);
+        p.end();
+    }
+}
+static void saveSaverPrefs() {
+    Preferences p;
+    if (p.begin("ui", false)) {
+        p.putBool("svOn",  g_uiSet.saverOn);
+        p.putInt ("svSec", g_uiSet.saverSec);
+        p.end();
+    }
+}
+
+// 외부(rotary_processor.ino 웹 핸들러)에서 호출하는 게터/세터
+// — UiSettings 타입을 노출하지 않기 위한 얇은 래퍼
+bool saverGetEnabled()         { return g_uiSet.saverOn; }
+int  saverGetTimeoutSec()      { return g_uiSet.saverSec; }
+void saverSetEnabled(bool en)  { g_uiSet.saverOn = en; saveSaverPrefs(); }
+void saverSetTimeoutSec(int s) {
+    if (s < 10)   s = 10;
+    if (s > 3600) s = 3600;
+    g_uiSet.saverSec = s;
+    saveSaverPrefs();
+}
 
 struct UiCtx {
     UiPage   page              = PAGE_STATUS;
@@ -169,12 +209,77 @@ struct UiCtx {
     uint32_t lastLiveRefreshMs = 0;
 } g_ui;
 
-// 메뉴 항목 (마지막에 Back-to-status 추가)
+// 메뉴 항목
 enum MenuIdx {
     MIDX_START = 0, MIDX_STOP, MIDX_SPEED, MIDX_PERIOD,
-    MIDX_DIR, MIDX_CYCLE, MIDX_INFO, MIDX_BACK
+    MIDX_DIR, MIDX_CYCLE, MIDX_SAVER_ON, MIDX_SAVER_TIME,
+    MIDX_INFO, MIDX_BACK
 };
-static const uint8_t MENU_ITEM_COUNT = 8;
+static const uint8_t MENU_ITEM_COUNT = 10;
+static const int     MENU_ITEM_Y0    = 32;   // 첫 항목 Y
+static const int     MENU_ITEM_H     = 20;   // 항목 높이 (10항목 × 20 = 200px, 36~232 영역)
+
+// ──────────────────────────────────────────────────────────────
+// 화면보호기 — JPEG / GIF 디코더 콜백
+// ──────────────────────────────────────────────────────────────
+//   파일 위치: LittleFS  /saver.jpg  또는  /saver.gif
+//   업로드: 웹 UI(/api/saver/image)에서 POST
+// ──────────────────────────────────────────────────────────────
+static AnimatedGIF g_gif;
+static File        g_gifFile;
+static bool        g_gifActive = false;
+
+// TJpg_Decoder 출력 콜백 — 디코더가 16x16 블록을 단위로 호출
+static bool tjpg_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+    if (y >= tft.height()) return false;
+    tft.drawRGBBitmap(x, y, bitmap, w, h);
+    return true;
+}
+
+// AnimatedGIF 파일 I/O 콜백
+static void* gifOpen(const char* fname, int32_t* pSize) {
+    g_gifFile = LittleFS.open(fname, "r");
+    if (!g_gifFile) return nullptr;
+    *pSize = g_gifFile.size();
+    return (void*)&g_gifFile;
+}
+static void gifClose(void* /*handle*/) {
+    if (g_gifFile) g_gifFile.close();
+}
+static int32_t gifRead(GIFFILE* gif, uint8_t* p, int32_t len) {
+    File* f = (File*)gif->fHandle;
+    int32_t left = gif->iSize - gif->iPos;
+    if (len > left) len = left;
+    int32_t n = f->read(p, len);
+    gif->iPos = f->position();
+    return n;
+}
+static int32_t gifSeek(GIFFILE* gif, int32_t pos) {
+    File* f = (File*)gif->fHandle;
+    f->seek(pos);
+    gif->iPos = pos;
+    return pos;
+}
+// 프레임을 라인 단위로 RGB565 변환해 TFT에 그리는 콜백
+static void gifDraw(GIFDRAW* d) {
+    uint16_t lineBuf[320];
+    uint8_t* s = d->pPixels;
+    uint16_t* pal = (uint16_t*)d->pPalette;
+    int w = d->iWidth;
+    if (w > 320) w = 320;
+    int y = d->iY + d->y;
+    if (y < 0 || y >= 240) return;
+    if (d->ucHasTransparency) {
+        uint8_t tcol = d->ucTransparent;
+        for (int x = 0; x < w; ++x) {
+            uint8_t c = s[x];
+            lineBuf[x] = (c == tcol) ? COL_BG : pal[c];
+        }
+    } else {
+        for (int x = 0; x < w; ++x) lineBuf[x] = pal[s[x]];
+    }
+    tft.drawRGBBitmap(d->iX, y, lineBuf, w, 1);
+}
 
 // ──────────────────────────────────────────────────────────────
 // 렌더 헬퍼
@@ -593,17 +698,17 @@ static void renderMenuChrome() {
 }
 
 static void renderMenuItems() {
-    char buf[40];
-    // 8개 항목, 항목 높이 22px → 메뉴 영역 44..220
+    char buf[48];
+    // 10개 항목, 항목 높이 20px → 메뉴 영역 32..232
     for (uint8_t i = 0; i < MENU_ITEM_COUNT; ++i) {
-        int  y   = 36 + i * 22;
+        int  y   = MENU_ITEM_Y0 + i * MENU_ITEM_H;
         bool sel = (i == g_ui.cursor);
         uint16_t bg = sel ? COL_AMBER : COL_BG;
         uint16_t fg = sel ? COL_BG    : COL_FG;
-        tft.fillRect(0, y, 320, 22, bg);
+        tft.fillRect(0, y, 320, MENU_ITEM_H, bg);
         tft.setTextColor(fg, bg);
         tft.setTextSize(2);
-        tft.setCursor(8, y + 3);
+        tft.setCursor(8, y + 2);
         tft.print(sel ? "> " : "  ");
 
         switch (i) {
@@ -620,6 +725,12 @@ static void renderMenuItems() {
                 tft.print(buf); break;
             case MIDX_CYCLE:
                 snprintf(buf, sizeof(buf), "Cycle     %s", g_uiSet.cycle ? "ON " : "OFF");
+                tft.print(buf); break;
+            case MIDX_SAVER_ON:
+                snprintf(buf, sizeof(buf), "Saver     %s", g_uiSet.saverOn ? "ON " : "OFF");
+                tft.print(buf); break;
+            case MIDX_SAVER_TIME:
+                snprintf(buf, sizeof(buf), "SaverTime %3d s", g_uiSet.saverSec);
                 tft.print(buf); break;
             case MIDX_INFO:  tft.print("Info"); break;
             case MIDX_BACK:  tft.print("Back to Status"); break;
@@ -653,6 +764,45 @@ static void renderEditValue(const char* unit) {
     int unitPx = (int)strlen(unit) * 3 * 6;
     tft.setCursor((320 - unitPx) / 2, 168);
     tft.print(unit);
+}
+
+// ──────────────────────────────────────────────────────────────
+// 페이지: 화면보호기
+//   파일 우선순위:  /saver.gif  >  /saver.jpg  >  텍스트 폴백
+//   GIF면 g_gifActive=true, 프레임은 displayTask 라이브 루프에서 진행
+// ──────────────────────────────────────────────────────────────
+static void enterScreensaver() {
+    tft.fillScreen(COL_BG);
+    g_gifActive = false;
+
+    if (LittleFS.exists("/saver.gif")) {
+        if (g_gif.open("/saver.gif", gifOpen, gifClose, gifRead, gifSeek, gifDraw)) {
+            g_gifActive = true;
+            Serial.printf("[Saver] GIF %dx%d 재생 시작\n",
+                          g_gif.getCanvasWidth(), g_gif.getCanvasHeight());
+            return;
+        }
+    }
+    if (LittleFS.exists("/saver.jpg")) {
+        TJpgDec.drawFsJpg(0, 0, "/saver.jpg", LittleFS);
+        Serial.println("[Saver] JPEG 표시");
+        return;
+    }
+
+    // 폴백 — 이미지 미설정
+    tft.setTextColor(COL_GRAY, COL_BG);
+    tft.setTextSize(2);
+    tft.setCursor(70, 100);  tft.print("Screensaver");
+    tft.setTextSize(1);
+    tft.setCursor(70, 130);  tft.print("Upload an image via web UI");
+    tft.setCursor(70, 146);  tft.print("/api/saver/image  (jpg or gif)");
+}
+
+static void exitScreensaver() {
+    if (g_gifActive) {
+        g_gif.close();
+        g_gifActive = false;
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -788,6 +938,15 @@ static void onMenuPush() {
             g_uiSet.cycle = !g_uiSet.cycle;
             g_ui.dirty = true;
             break;
+        case MIDX_SAVER_ON:
+            g_uiSet.saverOn = !g_uiSet.saverOn;
+            saveSaverPrefs();
+            g_ui.dirty = true;
+            break;
+        case MIDX_SAVER_TIME:
+            // 10초~3600초 범위, 5초 단위 추천이지만 인코더 1tick=1초로 단순화
+            enterEditPage(PAGE_EDIT_SAVER_SEC, g_uiSet.saverSec, 10, 3600);
+            break;
         case MIDX_INFO:
             changePage(PAGE_INFO);
             break;
@@ -825,6 +984,11 @@ static void onMenuOk() {
             g_uiSet.cycle = !g_uiSet.cycle;
             g_ui.dirty = true;
             break;
+        case MIDX_SAVER_ON:
+            g_uiSet.saverOn = !g_uiSet.saverOn;
+            saveSaverPrefs();
+            g_ui.dirty = true;
+            break;
         case MIDX_BACK:
             changePage(PAGE_STATUS);
             break;
@@ -834,8 +998,10 @@ static void onMenuOk() {
 
 static void onEditOk() {
     switch (g_ui.page) {
-        case PAGE_EDIT_SPEED:  g_uiSet.rpm    = g_ui.editValue; break;
-        case PAGE_EDIT_ROTSEC: g_uiSet.rotSec = g_ui.editValue; break;
+        case PAGE_EDIT_SPEED:     g_uiSet.rpm      = g_ui.editValue; break;
+        case PAGE_EDIT_ROTSEC:    g_uiSet.rotSec   = g_ui.editValue; break;
+        case PAGE_EDIT_SAVER_SEC: g_uiSet.saverSec = g_ui.editValue;
+                                  saveSaverPrefs(); break;
         default: break;
     }
     changePage(PAGE_MENU);
@@ -863,6 +1029,10 @@ static void initTft() {
     // U8g2 한글 폰트 엔진 — 같은 tft 객체에 부착
     u8g2.begin(tft);
     u8g2.setFontDirection(0);
+
+    // JPEG 디코더 — 16x16 블록 단위 콜백
+    TJpgDec.setJpgScale(1);
+    TJpgDec.setCallback(tjpg_output);
 }
 
 static void initInputs() {
@@ -882,8 +1052,12 @@ static void displayTask(void* /*param*/) {
 
     initTft();
     initInputs();
+    loadSaverPrefs();
+    g_gif.begin(LITTLE_ENDIAN_PIXELS);
+    touchInput();   // 부팅 직후 즉시 화면보호기 진입 방지
 
-    Serial.println("[Display] TFT/Encoder/Button 초기화 완료 (rotation=3, enc-invert)");
+    Serial.printf("[Display] init OK — saver %s, timeout %ds\n",
+                  g_uiSet.saverOn ? "ON" : "OFF", g_uiSet.saverSec);
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(40));   // 25 Hz 루프
@@ -895,6 +1069,22 @@ static void displayTask(void* /*param*/) {
         int8_t delta = popEncoderSteps();
         bool pushed  = btnConsume(btnPush);
         bool oked    = btnConsume(btnOk);
+        bool anyInput = (delta != 0) || pushed || oked;
+        if (anyInput) touchInput();
+
+        // ── 1.5) 화면보호기 진입 / 종료 자동 처리 ──
+        if (g_ui.page == PAGE_SCREENSAVER) {
+            if (anyInput) {
+                // 깨어남 — 입력 이벤트는 소비 (메뉴/액션 트리거하지 않음)
+                exitScreensaver();
+                changePage(PAGE_STATUS);
+                continue;
+            }
+        } else if (g_uiSet.saverOn &&
+                   g_ui.page != PAGE_RECIPE_WARN &&
+                   (millis() - g_lastInputMs) >= (uint32_t)g_uiSet.saverSec * 1000UL) {
+            changePage(PAGE_SCREENSAVER);
+        }
 
         // ── 2) 페이지별 입력 처리 ──
         switch (g_ui.page) {
@@ -920,6 +1110,7 @@ static void displayTask(void* /*param*/) {
 
             case PAGE_EDIT_SPEED:
             case PAGE_EDIT_ROTSEC:
+            case PAGE_EDIT_SAVER_SEC:
                 if (delta != 0) {
                     g_ui.editValue = constrain(g_ui.editValue + delta,
                                                g_ui.editMin, g_ui.editMax);
@@ -932,17 +1123,23 @@ static void displayTask(void* /*param*/) {
             case PAGE_INFO:
                 if (oked || pushed) changePage(PAGE_MENU);
                 break;
+
+            case PAGE_SCREENSAVER:
+                // 입력 처리 위 1.5에서 처리됨
+                break;
         }
 
         // ── 3) 페이지 전환 시 chrome 그리기 ──
         if (g_ui.pageChanged) {
             switch (g_ui.page) {
-                case PAGE_STATUS:        renderStatusChrome();         break;
-                case PAGE_RECIPE_WARN:   renderRecipeWarnFull();       break;
-                case PAGE_MENU:          renderMenuChrome();           break;
-                case PAGE_EDIT_SPEED:    renderEditChrome("Speed");    break;
-                case PAGE_EDIT_ROTSEC:   renderEditChrome("Period");   break;
-                case PAGE_INFO:          renderInfoFull();             break;
+                case PAGE_STATUS:         renderStatusChrome();           break;
+                case PAGE_RECIPE_WARN:    renderRecipeWarnFull();         break;
+                case PAGE_MENU:           renderMenuChrome();             break;
+                case PAGE_EDIT_SPEED:     renderEditChrome("Speed");      break;
+                case PAGE_EDIT_ROTSEC:    renderEditChrome("Period");     break;
+                case PAGE_EDIT_SAVER_SEC: renderEditChrome("Saver Time"); break;
+                case PAGE_INFO:           renderInfoFull();               break;
+                case PAGE_SCREENSAVER:    enterScreensaver();             break;
             }
             g_ui.pageChanged = false;
             g_ui.dirty       = true;
@@ -951,12 +1148,14 @@ static void displayTask(void* /*param*/) {
         // ── 4) 페이지 내부 변경 시 컨텐츠 갱신 ──
         if (g_ui.dirty) {
             switch (g_ui.page) {
-                case PAGE_STATUS:        renderStatusLive();           break;
-                case PAGE_MENU:          renderMenuItems();            break;
-                case PAGE_EDIT_SPEED:    renderEditValue("RPM");       break;
-                case PAGE_EDIT_ROTSEC:   renderEditValue("sec");       break;
-                case PAGE_INFO:          /* renderInfoFull로 일괄 */    break;
-                case PAGE_RECIPE_WARN:   /* renderRecipeWarnFull로 */   break;
+                case PAGE_STATUS:         renderStatusLive();           break;
+                case PAGE_MENU:           renderMenuItems();            break;
+                case PAGE_EDIT_SPEED:     renderEditValue("RPM");       break;
+                case PAGE_EDIT_ROTSEC:    renderEditValue("sec");       break;
+                case PAGE_EDIT_SAVER_SEC: renderEditValue("sec");       break;
+                case PAGE_INFO:           /* renderInfoFull로 일괄 */    break;
+                case PAGE_RECIPE_WARN:    /* renderRecipeWarnFull로 */   break;
+                case PAGE_SCREENSAVER:    /* enterScreensaver로 */       break;
             }
             g_ui.dirty = false;
         }
@@ -967,6 +1166,22 @@ static void displayTask(void* /*param*/) {
             (now - g_ui.lastLiveRefreshMs) >= 200) {
             renderStatusLive();
             g_ui.lastLiveRefreshMs = now;
+        }
+
+        // ── 6) 화면보호기 애니메이션 GIF 프레임 진행 ──
+        if (g_ui.page == PAGE_SCREENSAVER && g_gifActive) {
+            int delayMs = 0;
+            int rc = g_gif.playFrame(false, &delayMs);
+            if (rc < 0) {
+                // 디코딩 오류 — 종료
+                g_gif.close();
+                g_gifActive = false;
+            } else if (rc == 0) {
+                // 끝까지 재생 — 처음부터 다시
+                g_gif.reset();
+            }
+            // delayMs 만큼 양보 (다음 프레임까지 대기)
+            if (delayMs > 0 && delayMs < 200) vTaskDelay(pdMS_TO_TICKS(delayMs));
         }
     }
 }
