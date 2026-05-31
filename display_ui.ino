@@ -1080,6 +1080,18 @@ static void displayTask(void* /*param*/) {
         vTaskDelay(pdMS_TO_TICKS(40));   // 25 Hz 루프
         esp_task_wdt_reset();
 
+        // ── 스택 잔여 모니터링 (10초마다 출력) ──
+        // 안전 마진 검증 — 잔여 < 1024 bytes면 경고.
+        static uint32_t lastStackLogMs = 0;
+        uint32_t nowMs = millis();
+        if (nowMs - lastStackLogMs >= 10000) {
+            UBaseType_t free = uxTaskGetStackHighWaterMark(nullptr);
+            Serial.printf("[DisplayTask] free stack: %u bytes%s\n",
+                          (unsigned)free,
+                          (free < 1024) ? "  ⚠ 위험 — 스택 키워야 함" : "");
+            lastStackLogMs = nowMs;
+        }
+
         // ── 1) 입력 ──
         btnPoll(btnPush);
         btnPoll(btnOk);
@@ -1206,14 +1218,29 @@ static void displayTask(void* /*param*/) {
 // ──────────────────────────────────────────────────────────────
 // 공개 진입점 — rotary_processor.ino의 setup()에서 호출
 // ──────────────────────────────────────────────────────────────
+// [스택 크기 8192]
+//   기존 4096은 u8g2 한글 글리프 디코드(unifont_t_korean1) + Adafruit_GFX
+//   호출 시 스택 한계에 근접 → stack overflow panic 위험.
+//   안전 마진 2배 확보. ESP32-S3는 메모리 여유 충분 (PSRAM 8MB).
+//   uxTaskGetStackHighWaterMark()로 실시간 잔여 스택 모니터링 (loop 안).
+// ──────────────────────────────────────────────────────────────
+static TaskHandle_t g_displayTaskHandle = nullptr;
+
 void startDisplayTask() {
     xTaskCreatePinnedToCore(
         displayTask,
         "DisplayTask",
-        4096,
+        8192,                  // 4096 → 8192 (u8g2 한글 폰트 + Adafruit_GFX 안전 마진)
         nullptr,
         2,
-        nullptr,
+        &g_displayTaskHandle,
         0
     );
+}
+
+// 스택 잔여 모니터링 — 외부에서 호출 가능
+// 반환값이 작을수록(<512 bytes) 스택 위험. 0이면 overflow 임박.
+uint32_t displayTaskFreeStack() {
+    if (!g_displayTaskHandle) return 0;
+    return uxTaskGetStackHighWaterMark(g_displayTaskHandle);
 }

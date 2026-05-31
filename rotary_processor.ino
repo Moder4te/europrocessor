@@ -4,6 +4,9 @@
  * Analog Film Development Rotary Processor Firmware v3.1
  *
  * [v3.1.1 패치] — panel 보호 / 안정성
+ *   - displayTask 스택 4096 → 8192 (u8g2 한글 글리프 + Adafruit_GFX 안전 마진)
+ *     · 기존 4096은 한글 폰트 출력 시 stack overflow panic 위험 잔존
+ *     · 10초마다 uxTaskGetStackHighWaterMark로 잔여 스택 모니터링 출력
  *   - 부팅 시퀀스에서 panel 신호 핀(TFT_CS/DC/RST/SCK/MOSI/BL)을 가장
  *     먼저 OUTPUT + idle 레벨로 고정 → floating noise로 인한 panel
  *     컨트롤러 stress/사망 예방 (이전 디버깅에서 panic 후 panel 사망 사례)
