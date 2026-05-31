@@ -1,44 +1,22 @@
 /*
  * ================================================================
- * 아날로그 필름 로터리 프로세서 펌웨어 v3.0
- * Analog Film Development Rotary Processor Firmware v3.0
+ * 아날로그 필름 로터리 프로세서 펌웨어 v3.0 — NO-DISPLAY EDITION
+ * Analog Film Development Rotary Processor Firmware v3.0 (headless)
  *
- * [v2.2 → v3.0 변경사항] — 디스플레이 UI 전면 개편 (display_ui.ino)
- *   - STATUS 페이지 깜빡임(flicker) 제거
- *     · 직전 프레임 값을 캐시 → 변화한 필드만 부분 재그리기
- *     · 숫자/고정폭 필드는 setTextColor(fg, bg) 글리프 배경 페인트로
- *       clearArea() 단계 자체를 제거 (검은 fill → 텍스트 2단계 깜빡임 원인)
- *     · 가변길이 텍스트(레시피명/단계명)만 변경 시 clear+redraw
- *   - 한글 UTF-8 폰트 지원 (U8g2_for_Adafruit_GFX + unifont_t_korean1)
- *     · 영역 C(레시피명/현재단계/다음단계)에 16px 한글 폰트 적용
- *     · 영역 C 라인 간격을 16px로 통일 (y=130/148/166)
- *     · setFontMode(0)+setBackgroundColor 로 글리프 배경 페인트 → 깜빡임 없음
+ * [본 빌드 변종]
+ *   - 디스플레이/인코더/KO 버튼 모듈 전부 제거 (display_ui.ino 없음)
+ *   - U8g2 / Adafruit_GFX / Adafruit_ST7789 라이브러리 의존성 없음
+ *   - 제어는 오직 웹 UI (AP http://192.168.4.1 또는 STA DHCP)로만 수행
+ *   - 모터/온도/레시피 코어는 디스플레이 버전과 동일 (코드 동기화는 수동)
+ *
+ * [v2.2 → v3.0 변경사항] — 본 변종은 코어 로직만 공유
  *   - 신규 안전 정지 명령 CMD_SAFE_STOP / 상태 MS_STOP_SAFE
  *     · stopMove()로 가속도 곡선 따라 감속 후 IDLE (탈조/관성 충격 없음)
  *     · 레시피/수동 모드 모두 동일하게 안전 종료
  *     · emergencyStop()(즉시 정지)은 비상용으로 보존
- *   - PAGE_STATUS에서 KO 멀티 동작 (상태 인지형):
- *     · Idle           → 마지막 설정값으로 수동 시작
- *     · 레시피 진행중  → 일시정지
- *     · 레시피 일시정지 → 재개
- *     · 레시피 확인대기 → 다음 단계
- *     · 수동 운전중    → 안전 정지 (CMD_SAFE_STOP)
- *   - STA 연결 자동 감지 기반 페이지 전환 제거
- *     · WiFi.status() 폴링이 불안정 / 깜빡임을 유발했음
- *     · 부팅 시 항상 PAGE_STATUS 진입, 사용자가 PUSH로 메뉴 진입
- *   - PAGE_STATUS: 웹 status 페이지와 동등한 정보 렌더링
- *     · 모드 태그(IDLE/RECIPE/MANUAL/PAUSE/CONFIRM)
- *     · 대형 RPM + 목표 RPM + 방향 배지 + 출력 진행바
- *     · 약품 온도 (FAULT 표시 포함)
- *     · 레시피 이름/현재 단계/다음 단계/남은 시간 + 단계 진행바
- *     · 수동 스톱워치는 디스플레이에서 제외 (웹 전용)
- *   - PAGE_RECIPE_WARN: 레시피 진행 중 메뉴 진입 시 경고 다이얼로그
- *     · KO = 확인(CMD_STOP enqueue 후 메뉴) / PUSH = 취소(상태창)
- *   - 메뉴 항목 마지막에 "Back to Status" 추가
- *   - 디스플레이 180° 회전 (setRotation 1 → 3)
- *   - 인코더 부호 반전 (회전 보정 — 시계방향 = "다음" 유지)
- *   - UI_DISPLAY_PRESENT 기본값 1 (디스플레이 보드 표준화)
  *   - 핀 정의 섹션에 ESP32-S3 GPIO 제약 검증 주석 추가
+ *   - 디스플레이 변종에서 추가된 UI 개편 사항(STATUS/MENU/WARN 페이지,
+ *     깜빡임 제거, 한글 폰트, KO 멀티 동작 등)은 본 변종에 적용 안 됨
  *
  * [v2.1 → v2.2 변경사항] — 크로스코어 안전성 & 장기 안정성
  *   - 명령 큐(g_cmdQueue): 웹 핸들러(Core 0)에서 모터/레시피 조작 금지,
@@ -84,9 +62,7 @@
  *   - ArduinoJson        (v6 or v7)
  *   - FastAccelStepper   (Library Manager / GitHub: gin66/FastAccelStepper)
  *   - Adafruit MAX31865  (Library Manager)
- *   - Adafruit GFX       (Library Manager)
- *   - Adafruit ST7789    (Library Manager — TFT 디스플레이)
- *   - U8g2_for_Adafruit_GFX (Library Manager — 한글 UTF-8 폰트)
+ *   - (디스플레이 관련 라이브러리는 본 변종에서 불필요)
  *
  * ──────────────────────────────────────────────────────────────
  * [핀 배정]
@@ -149,35 +125,9 @@
 #define PIN_MISO   39    // SDO
 #define PIN_CLK    40    // CLK
 
-// [TFT ST7789] — 하드웨어 SPI (FSPI)
-//   ESP32-S3 FSPI 기본 핀: SCK=12, MOSI=11  → IO-MUX 직결로 최고 속도(40MHz)
-//   다른 핀에 매핑하면 GPIO matrix 경유 → 최대 약 26MHz로 제한됨
-#define PIN_TFT_SCK   12   // SCL (FSPI native)
-#define PIN_TFT_MOSI  11   // SDA (FSPI native)
-#define PIN_TFT_CS    10   // 일반 GPIO
-#define PIN_TFT_DC     9   // 일반 GPIO (Data/Command)
-#define PIN_TFT_RST   14   // 일반 GPIO (Reset, 부팅 시 영향 없음)
-#define PIN_TFT_BL    21   // 백라이트 (HIGH=ON, LEDC 채널로 PWM 밝기 확장 가능)
-
-// [EC11 로터리 인코더] — A/B 인터럽트, PUSH 폴링
-//   GPIO 15/16 : ADC2_CH4/CH5 — WiFi 동시 사용 시 ADC 불가하나 디지털 입력은 영향 없음
-//   INPUT_PULLUP 사용 (외부 풀업 불필요), CHANGE 인터럽트로 양 채널 디코딩
-#define PIN_ENC_A     15   // A상 (인터럽트)
-#define PIN_ENC_B     16   // B상 (인터럽트)
-#define PIN_ENC_PUSH  17   // PUSH 스위치 (편집 진입 / 토글)
-
-// [확정 푸시버튼 KO]
-//   GPIO 18 : ADC2_CH7 — 위와 동일, 디지털 입력으로 사용
-#define PIN_KEY_OK    18   // 선택 확정 (Start/Stop/Save)
-
-// ──────────────────────────────────────────────────────────────
-// 빌드 옵션
-// ──────────────────────────────────────────────────────────────
-// 디스플레이 모듈(TFT+EC11+KO)이 실제 결선되어 있는지 여부.
-// 0으로 두면 displayTask 자체를 생성하지 않음 → 부유 입력 핀에서
-// EMI로 인한 가짜 인코더/버튼 이벤트가 모터를 잘못 기동시킬 위험 제거.
-// 디스플레이 결선 후 1로 변경.
-#define UI_DISPLAY_PRESENT  1
+// [무디스플레이 변종] TFT/EC11/KO 핀 정의 없음
+//   해당 GPIO(9~18, 21)는 본 보드에서 미사용 — 회로 미장착
+//   향후 다른 주변기기로 재할당해도 무방
 
 // ──────────────────────────────────────────────────────────────
 // 모터 파라미터
@@ -303,12 +253,6 @@ Adafruit_MAX31865 tempSensor(PIN_CS, PIN_MOSI, PIN_MISO, PIN_CLK);
 const IPAddress AP_IP (192,168,4,1);
 const IPAddress AP_GW (192,168,4,1);
 const IPAddress AP_SUB(255,255,255,0);
-
-// ──────────────────────────────────────────────────────────────
-// 외부 모듈(display_ui.ino) 함수 전방 선언
-// Arduino IDE 자동 프로토타입 생성이 멀티 .ino를 놓치는 경우 대비
-// ──────────────────────────────────────────────────────────────
-void startDisplayTask();
 
 // ──────────────────────────────────────────────────────────────
 // 모터 제어 헬퍼
@@ -1693,14 +1637,8 @@ void setup() {
     );
     Serial.println("[Core] tempTask → Core 0 시작");
 
-    // 디스플레이 / 인코더 / 버튼 UI 태스크 시작 (Core 0)
-    // 실제 모터/레시피 명령은 명령 큐로 enqueue → Core 1 loop이 처리
-#if UI_DISPLAY_PRESENT
-    startDisplayTask();
-    Serial.println("[Core] DisplayTask → Core 0 시작\n");
-#else
-    Serial.println("[Core] DisplayTask 비활성 (UI_DISPLAY_PRESENT=0)\n");
-#endif
+    // [무디스플레이 변종] DisplayTask 없음 — 제어는 웹 UI 전용
+    Serial.println("[Core] Headless build — control via web UI only\n");
 }
 
 // ──────────────────────────────────────────────────────────────
