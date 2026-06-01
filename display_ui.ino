@@ -522,9 +522,10 @@ static void renderStatusLive() {
         tft.setCursor(8, 44);
         tft.print(buf);
 
-        // 모터 출력 진행바 (0~100 RPM, 폭 200px) — RPM 변경 시 동기 갱신
-        int sat = rpm < 0 ? 0 : (rpm > 100 ? 100 : rpm);
-        int barW = sat * 198 / 100;
+        // 모터 출력 진행바 (0~MAX_OUTPUT_RPM, 폭 198px) — RPM 변경 시 동기 갱신
+        int maxR = (int)MAX_OUTPUT_RPM;
+        int sat  = rpm < 0 ? 0 : (rpm > maxR ? maxR : rpm);
+        int barW = sat * 198 / maxR;
         tft.drawRect(8, 96, 200, 6, COL_DGRAY);
         if (barW > 0) tft.fillRect(9, 97, barW, 4, COL_AMBER);
         if (barW < 198) tft.fillRect(9 + barW, 97, 198 - barW, 4, COL_BG);

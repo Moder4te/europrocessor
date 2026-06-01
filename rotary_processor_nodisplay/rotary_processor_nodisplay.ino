@@ -136,13 +136,17 @@
 // FastAccelStepper 하드웨어 타이머 ISR: WiFi 인터럽트와 무관하게 정밀 펄스 생성
 #define STEPS_PER_REV   1600        // 200 스텝 × 8 마이크로스텝
 #define GEAR_RATIO      3.71f
-#define MAX_OUTPUT_RPM  100.0f      // 출력축 최대 RPM (사용자 설정 상한)
+// 출력축 최대 RPM = 80. 80 초과 시 탈조: 마이크로스텝 계산 오류가 아니라
+// 스테퍼 토크-속도 한계(출력 80=모터 ~297RPM에서 back-EMF로 토크 급감).
+// 펄스 생성(7.9k step/s)은 여유 → 코드/배선 결함 아님. 더 높이려면
+// SpreadCycle 활성 / VMOT↑ / 전류↑ (HW).
+#define MAX_OUTPUT_RPM   80.0f      // 출력축 최대 RPM (탈조 한계 기반 안전 상한)
 #define MIN_OUTPUT_RPM    5.0f      // 출력축 최소 RPM (실속 방지)
 
-// MAX_SPEED: 100RPM × 3.71 / 60 × 1600 ≈ 9,882 스텝/초
+// MAX_SPEED: 80RPM × 3.71 / 60 × 1600 ≈ 7,915 스텝/초
 #define MAX_SPEED   (MAX_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV)
 #define MIN_SPEED   (MIN_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV)
-#define ACCEL       6000.0f               // 스텝/초² (0→100RPM 약 1.6초)
+#define ACCEL       6000.0f               // 스텝/초² (0→80RPM 약 1.3초)
 
 // ──────────────────────────────────────────────────────────────
 // 타이밍
@@ -224,6 +228,9 @@ String   g_staGW       = "192.168.1.1";
 String   g_staSN       = "255.255.255.0";
 String   g_staDNS      = "8.8.8.8";
 bool     g_noCycle=false, g_manualMode=false;
+// 웹 비상정지 — 명령 큐가 가득 차도 정지가 유실되지 않도록 큐를 우회하는
+// 단일 플래그. Core 0(웹 핸들러)가 set, Core 1(loop)이 확인 후 clear.
+volatile bool g_estop = false;
 float    g_temperature = -999.0f;   // tempTask(Core 0)가 쓰고, Core 1이 읽음
 uint8_t  g_tempFault   = 0;
 uint16_t g_tempFaultCount = 0;      // 연속 fault 카운터 — N회 누적 후에만 clear
@@ -880,7 +887,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   <div class="card">
     <div class="card-title" data-i18n="manual_power"></div>
     <div class="pwr-slider-val"><span id="m-pct-val">50</span><span>RPM</span></div>
-    <input type="range" id="m-slider" min="1" max="100" value="50"
+    <input type="range" id="m-slider" min="1" max="80" value="50"
            oninput="document.getElementById('m-pct-val').textContent=this.value">
   </div>
   <div class="card">
@@ -1148,7 +1155,7 @@ function renderStepEditor(){
       <button class="btn btn-danger btn-icon btn-sm" onclick="rmS(${i})">✕</button>
     </div>
     <div class="step-params">
-      <div class="sp"><label>${t('lbl_power')}</label><input type="number" min="1" max="100" value="${s.speedRpm}" oninput="updS(${i},'speedRpm',+this.value)"></div>
+      <div class="sp"><label>${t('lbl_power')}</label><input type="number" min="1" max="80" value="${s.speedRpm}" oninput="updS(${i},'speedRpm',+this.value)"></div>
       <div class="sp"><label>${t('lbl_dur')}</label><input type="number" min="1" value="${s.durSec}" oninput="updS(${i},'durSec',+this.value)"></div>
       <div class="sp"><label>${t('lbl_rot')}</label><input type="number" min="5" value="${s.rotIntSec}" oninput="updS(${i},'rotIntSec',+this.value)"></div>
     </div></div>`).join('');
@@ -1163,7 +1170,7 @@ async function runSelectedRecipe(){
   const rec=recipes[activeCat][selIdx];
   if(!rec.steps.length){alert(t('warn_no_steps'));return;}
   if(!confirm(t('confirm_run')))return;
-  lastRun={recipeName:rec.name,steps:rec.steps.map(s=>({name:s.name,speedRpm:clamp(s.speedRpm||50,1,100),durationSec:Math.max(1,s.durSec),rotIntSec:Math.max(5,s.rotIntSec)}))};
+  lastRun={recipeName:rec.name,steps:rec.steps.map(s=>({name:s.name,speedRpm:clamp(s.speedRpm||50,1,80),durationSec:Math.max(1,s.durSec),rotIntSec:Math.max(5,s.rotIntSec)}))};
   await postJ('/api/start',lastRun);
   switchTab('status',document.querySelectorAll('.bnav-btn')[1]);
 }
@@ -1175,7 +1182,7 @@ async function fetchStatus(){try{const r=await fetch('/api/status');sd=await r.j
 
 function updateStatusUI(){
   document.getElementById('s-pct').innerHTML=sd.motorRpm+'<span>RPM</span>';
-  document.getElementById('s-pwr').style.width=sd.motorRpm+'%';  // 최대 100RPM = 100%
+  document.getElementById('s-pwr').style.width=Math.min(100,sd.motorRpm*100/80)+'%';  // 최대 80RPM = 100%
   const dm={FWD:['b-fwd',t('dir_fwd')],REV:['b-rev',t('dir_rev')],REST:['b-rest',t('dir_rest')],IDLE:['b-idle',t('dir_idle')]};
   const [cls,txt]=dm[sd.motorDir]||['b-idle',t('dir_idle')];
   const b=document.getElementById('s-dir');b.className='badge '+cls;b.textContent=txt;
@@ -1370,8 +1377,9 @@ void setupRoutes() {
     // 이하 모터/레시피 조작 핸들러는 명령 큐로 전달만 한다.
     // 실제 상태 변경은 Core 1 loop()의 drainCmdQueue()에서 수행.
     g_server.on("/api/stop", HTTP_POST, [](AsyncWebServerRequest* req){
-        Cmd c{}; c.type = CMD_STOP;
-        enqueueCmd(c);
+        // 정지는 안전 명령 → 큐(깊이 제한)를 우회해 플래그로 직접 전달.
+        // loop()이 매 사이클 최우선으로 확인하므로 큐가 가득 차도 유실 없음.
+        g_estop = true;
         req->send(200, "application/json", "{\"ok\":true}");
     });
     g_server.on("/api/pause", HTTP_POST, [](AsyncWebServerRequest* req){
@@ -1497,12 +1505,18 @@ void setupRoutes() {
 // setup()
 // ──────────────────────────────────────────────────────────────
 void setup() {
+    // 0) 모터 드라이버 EN 즉시 차단 (★ 물리 손상 방지 — 무조건 가장 먼저)
+    //    TMC2209 EN은 active-low. 리셋~setup 도달 구간(+크래시/WDT 리셋)에
+    //    PIN_EN이 floating LOW면 드라이버 enable → 코일 통전 발열/소손.
+    //    (HW EN→3.3V 10K 풀업과 병행하면 플래싱·무전원 구간까지 안전)
+    pinMode(PIN_EN, OUTPUT);
+    digitalWrite(PIN_EN, HIGH);   // = disableMotor() : 코일 전류 차단
+
     Serial.begin(115200);
     delay(500);
     Serial.println("\n[Film Processor v2.2] 초기화 시작");
 
-    // TMC2209 EN 핀 초기화 (비활성 상태로 시작)
-    pinMode(PIN_EN, OUTPUT);
+    // PIN_EN은 setup() 진입 즉시 차단 완료(위 0번). 여기선 재확인만.
     disableMotor();
 
     // MAX31865 CS 핀을 명시적으로 HIGH로 고정 — 부팅 직후 부유 상태 차단
@@ -1521,11 +1535,11 @@ void setup() {
     Serial.printf("[Stepper] MAX_SPEED=%.0f steps/s (출력축 최대 %.0f RPM)\n",
                   MAX_SPEED, (float)MAX_OUTPUT_RPM);
 
-    // MAX31865 초기화
-    // ※ 3선식 PT100 사용 시: MAX31865_3WIRE 로 변경
-    // ※ 4선식 PT100 사용 시: MAX31865_4WIRE (현재 설정)
-    tempSensor.begin(MAX31865_4WIRE);
-    Serial.println("[MAX31865] 초기화 완료 (4WIRE, RREF=412.0)");
+    // MAX31865 초기화 — 3선식 PT100
+    // ※ 보드 RREF는 실측값 412.0Ω (RREF/RNOMINAL define 참조)
+    // ※ 4선식으로 변경 시: MAX31865_4WIRE + 보드 솔더점퍼도 함께 변경
+    tempSensor.begin(MAX31865_3WIRE);
+    Serial.println("[MAX31865] 초기화 완료 (3WIRE, RREF=412.0)");
 
     // Preferences에서 WiFi 설정 로드
     g_prefs.begin("wifi", true);
@@ -1649,6 +1663,9 @@ void setup() {
 void loop() {
     // 워치독 reset — 6초 이상 loop 멈추면 시스템 자동 리셋
     esp_task_wdt_reset();
+
+    // ── 0) 비상정지 최우선 처리 (큐 우회 — 절대 유실 금지) ──────────────────
+    if (g_estop) { g_estop = false; emergencyStop(); }
 
     // ── 1) 웹 명령 큐 비우기 (모든 모터/레시피 변경은 여기서만) ──────────────
     drainCmdQueue();

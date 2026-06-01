@@ -117,6 +117,36 @@
  *   - AnimatedGIF        (Library Manager — GIF 화면보호기, bitbank2)
  *
  * ──────────────────────────────────────────────────────────────
+ * [하드웨어 스펙 — 실측/검증 기준]
+ *   · MCU        : ESP32-S3 (N16R8, 16MB Flash / 8MB PSRAM)
+ *   · 모터       : NEMA17 + 3.71:1 유성기어, 1.8°/스텝(200 step/rev)
+ *                  정격 1.3A/상, 홀딩토크 0.45N·m(모터축)
+ *                  → 기어출력 홀딩 ≈ 1.4N·m (×3.71, η≈0.85)
+ *   · 드라이버   : TMC2209 스탠드얼론, StealthChop(기본 — 저발열·저소음)
+ *                  VREF 0.7V ⇒ I_RMS ≈ 0.5A (Rsense 0.11Ω 가정, 미확정)
+ *                  마이크로스텝 1/8 (MS1=LOW/MS2=LOW) → 1,600 step/rev
+ *                  ※ MS1/MS2 실배선 1/8 여부 확인 필요(미검증)
+ *   · 전원(VMOT) : 메인 20V / 보조배터리 12V
+ *                  ※ 12V는 고속 토크↓ — 75RPM 탈조 여부 실측 필요
+ *   · 속도       : 출력축 최대 80RPM(토크-속도 한계), 권장 운전 75RPM
+ *                  80 초과 시 탈조 — 전류·전압 한계이며 코드 결함 아님
+ *   · 온도센서   : MAX31865 + PT100, 3선식, RREF 412Ω(실측)/RNOMINAL 100
+ *   · 디스플레이 : ST7789 320×240 TFT (FSPI)
+ *
+ *   [냉각 — 2존 분리, 실측 검증 완료]
+ *   · 모터  : 수면 아래 PETG 벽 밀착 + 38°C 수조 = 세미 수랭
+ *   · 전자부: 드라이버/ESP/TFT는 물 위 상부 건식 챔버 공냉
+ *   · 검증  : 75RPM 연속 2h+ 구동 → 양쪽 존 모두 ≈50°C
+ *            PETG Tg≈80°C 대비 30°C 마진, 캡/MCU 정격 대비 여유 충분
+ *   · 발열은 전류²(I²R)가 지배 → 발열 억제 우선 시 VREF 최소 유지
+ *
+ *   [부팅/플래싱 보호 — 물리 손상 방지]
+ *   · setup() 진입 즉시 TMC2209 EN=HIGH(코일 차단) → 발열/소손 방지
+ *   · 권장 HW 풀업: EN→3.3V 10K(드라이버 idle 고정),
+ *                  TFT CS·RES→3.3V 10K (panel 보호)
+ *                  → 부팅·플래싱·크래시 floating 구간까지 봉인
+ *   · 모터 챔버 씰 무결성 필수(물 침투 = 모터 즉사) + 결로 주의
+ * ──────────────────────────────────────────────────────────────
  * [핀 배정]
  *   TMC2209: 허용 핀 목록 (4,5,6,7,15,16,17,18,8,3,46,9~14) 내 사용
  *     STEP → GPIO 5   DIR → GPIO 6   EN → GPIO 7
@@ -127,7 +157,8 @@
  *   마이크로스텝: 8 (MS1=LOW, MS2=LOW — TMC2209 스탠드얼론 기본값)
  *   스텝/회전   = 200 × 8 = 1,600
  *   기어비      = 3.71 : 1
- *   출력축 65RPM → 모터 241.15RPM → 6,430 스텝/초
+ *   출력 75RPM(권장) → 모터 278.3RPM → 7,420 step/s
+ *   출력 80RPM(최대) → 모터 296.8RPM → 7,915 step/s (= MAX_SPEED)
  *
  * [접속]  AP: http://192.168.4.1  |  홈WiFi: DHCP IP (설정 페이지 확인)
  * ================================================================
@@ -215,13 +246,19 @@
 // FastAccelStepper 하드웨어 타이머 ISR: WiFi 인터럽트와 무관하게 정밀 펄스 생성
 #define STEPS_PER_REV   1600        // 200 스텝 × 8 마이크로스텝
 #define GEAR_RATIO      3.71f
-#define MAX_OUTPUT_RPM  100.0f      // 출력축 최대 RPM (사용자 설정 상한)
+// 출력축 최대 RPM = 80.
+//   ※ 80 초과 시 탈조: 마이크로스텝 계산 오류가 아니라 스테퍼 토크-속도 한계.
+//     출력 80RPM = 모터 80×3.71 ≈ 297RPM. 이 영역부터 back-EMF로 토크가
+//     급감해 (StealthChop 기본 모드 + 현재 VMOT/전류/부하 조합에서) 부하·관성을
+//     못 이김. 펄스 생성(7.9k step/s)은 여유로우므로 코드/배선 결함 아님.
+//     더 높이려면: SpreadCycle 활성(SPREAD 핀 또는 UART) / VMOT↑ / 전류↑ (HW).
+#define MAX_OUTPUT_RPM   80.0f      // 출력축 최대 RPM (탈조 한계 기반 안전 상한)
 #define MIN_OUTPUT_RPM    5.0f      // 출력축 최소 RPM (실속 방지)
 
-// MAX_SPEED: 100RPM × 3.71 / 60 × 1600 ≈ 9,882 스텝/초
+// MAX_SPEED: 80RPM × 3.71 / 60 × 1600 ≈ 7,915 스텝/초
 #define MAX_SPEED   (MAX_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV)
 #define MIN_SPEED   (MIN_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV)
-#define ACCEL       6000.0f               // 스텝/초² (0→100RPM 약 1.6초)
+#define ACCEL       6000.0f               // 스텝/초² (0→80RPM 약 1.3초)
 
 // ──────────────────────────────────────────────────────────────
 // 타이밍
@@ -303,6 +340,9 @@ String   g_staGW       = "192.168.1.1";
 String   g_staSN       = "255.255.255.0";
 String   g_staDNS      = "8.8.8.8";
 bool     g_noCycle=false, g_manualMode=false;
+// 웹 비상정지 — 명령 큐가 가득 차도 정지가 유실되지 않도록 큐를 우회하는
+// 단일 플래그. Core 0(웹 핸들러)가 set, Core 1(loop)이 확인 후 clear.
+volatile bool g_estop = false;
 float    g_temperature = -999.0f;   // tempTask(Core 0)가 쓰고, Core 1이 읽음
 uint8_t  g_tempFault   = 0;
 uint16_t g_tempFaultCount = 0;      // 연속 fault 카운터 — N회 누적 후에만 clear
@@ -969,7 +1009,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   <div class="card">
     <div class="card-title" data-i18n="manual_power"></div>
     <div class="pwr-slider-val"><span id="m-pct-val">50</span><span>RPM</span></div>
-    <input type="range" id="m-slider" min="1" max="100" value="50"
+    <input type="range" id="m-slider" min="1" max="80" value="50"
            oninput="document.getElementById('m-pct-val').textContent=this.value">
   </div>
   <div class="card">
@@ -1166,6 +1206,7 @@ const STR={
     saver_image:'배경 이미지 (JPEG / GIF)',saver_upload:'업로드',saver_delete:'삭제',
     saver_ok:'업로드 완료',saver_fail:'업로드 실패',saver_none:'이미지 없음',
     saver_has:'설정됨',saver_choose:'파일을 먼저 선택해주세요.',
+    saver_proc:'이미지 처리 중…',saver_up:'업로드 중…',
     ph_step_name:'단계 이름',lbl_power:'속도(RPM)',lbl_dur:'시간(초)',lbl_rot:'방향전환(초)',
     confirm_del:'이 레시피를 삭제하시겠습니까?',
     confirm_run:'레시피를 실행합니다. 현재 동작이 중단됩니다.',
@@ -1204,6 +1245,7 @@ const STR={
     saver_image:'Background Image (JPEG / GIF)',saver_upload:'Upload',saver_delete:'Delete',
     saver_ok:'Upload complete',saver_fail:'Upload failed',saver_none:'No image set',
     saver_has:'Image set',saver_choose:'Please pick a file first.',
+    saver_proc:'Processing image…',saver_up:'Uploading…',
     ph_step_name:'Step name',lbl_power:'Speed(RPM)',lbl_dur:'Duration(s)',lbl_rot:'Rotation(s)',
     confirm_del:'Delete this recipe?',
     confirm_run:'Run recipe? Current operation will stop.',
@@ -1275,7 +1317,7 @@ function renderStepEditor(){
       <button class="btn btn-danger btn-icon btn-sm" onclick="rmS(${i})">✕</button>
     </div>
     <div class="step-params">
-      <div class="sp"><label>${t('lbl_power')}</label><input type="number" min="1" max="100" value="${s.speedRpm}" oninput="updS(${i},'speedRpm',+this.value)"></div>
+      <div class="sp"><label>${t('lbl_power')}</label><input type="number" min="1" max="80" value="${s.speedRpm}" oninput="updS(${i},'speedRpm',+this.value)"></div>
       <div class="sp"><label>${t('lbl_dur')}</label><input type="number" min="1" value="${s.durSec}" oninput="updS(${i},'durSec',+this.value)"></div>
       <div class="sp"><label>${t('lbl_rot')}</label><input type="number" min="5" value="${s.rotIntSec}" oninput="updS(${i},'rotIntSec',+this.value)"></div>
     </div></div>`).join('');
@@ -1290,7 +1332,7 @@ async function runSelectedRecipe(){
   const rec=recipes[activeCat][selIdx];
   if(!rec.steps.length){alert(t('warn_no_steps'));return;}
   if(!confirm(t('confirm_run')))return;
-  lastRun={recipeName:rec.name,steps:rec.steps.map(s=>({name:s.name,speedRpm:clamp(s.speedRpm||50,1,100),durationSec:Math.max(1,s.durSec),rotIntSec:Math.max(5,s.rotIntSec)}))};
+  lastRun={recipeName:rec.name,steps:rec.steps.map(s=>({name:s.name,speedRpm:clamp(s.speedRpm||50,1,80),durationSec:Math.max(1,s.durSec),rotIntSec:Math.max(5,s.rotIntSec)}))};
   await postJ('/api/start',lastRun);
   switchTab('status',document.querySelectorAll('.bnav-btn')[1]);
 }
@@ -1302,7 +1344,7 @@ async function fetchStatus(){try{const r=await fetch('/api/status');sd=await r.j
 
 function updateStatusUI(){
   document.getElementById('s-pct').innerHTML=sd.motorRpm+'<span>RPM</span>';
-  document.getElementById('s-pwr').style.width=sd.motorRpm+'%';  // 최대 100RPM = 100%
+  document.getElementById('s-pwr').style.width=Math.min(100,sd.motorRpm*100/80)+'%';  // 최대 80RPM = 100%
   const dm={FWD:['b-fwd',t('dir_fwd')],REV:['b-rev',t('dir_rev')],REST:['b-rest',t('dir_rest')],IDLE:['b-idle',t('dir_idle')]};
   const [cls,txt]=dm[sd.motorDir]||['b-idle',t('dir_idle')];
   const b=document.getElementById('s-dir');b.className='badge '+cls;b.textContent=txt;
@@ -1451,17 +1493,286 @@ function onSaverEnableToggle(){
 function onSaverTimeoutChange(){
   pushSaver({timeoutSec:parseInt(document.getElementById('saver-timeout-sel').value,10)});
 }
+/* ──────────────────────────────────────────────────────────────
+   클라이언트(브라우저) 측 이미지 트랜스코드 — 보드 부하 경감
+   · 디스플레이는 320x240(ST7789)이므로 그 안에 맞도록 강제 다운스케일
+   · JPEG/기타 정적 이미지 : canvas 리사이즈 + 품질 압축 → JPEG
+   · 애니메이션 GIF        : 전 프레임 디코드(LZW) → 320x240 리사이즈
+                              → 256색 양자화 → 프레임 간 차분(투명) 최적화
+                              → GIF89a 재인코딩 (애니메이션 유지, 용량↓)
+   라이브러리 없이 순수 JS로 구현(오프라인 AP라 CDN 불가).
+   ────────────────────────────────────────────────────────────── */
+const SAVER_MAXW=320, SAVER_MAXH=240;       // 디스플레이 해상도
+const SAVER_JPEG_MAX=1.5*1024*1024;         // JPEG 목표 상한(초과 시 품질↓)
+const SAVER_MAX_FRAMES=64;                  // GIF 출력 최대 프레임(초과분은 솎음)
+
+// 비율 유지하며 320x240 안에 맞춤(확대 없음, 축소만)
+function fitSize(w,h){
+  const s=Math.min(SAVER_MAXW/w, SAVER_MAXH/h, 1);
+  return {w:Math.max(1,Math.round(w*s)), h:Math.max(1,Math.round(h*s))};
+}
+function canvasBlob(cv,type,q){ return new Promise(r=>cv.toBlob(r,type,q)); }
+async function isGifFile(file){
+  const b=new Uint8Array(await file.slice(0,4).arrayBuffer());
+  return b[0]==0x47&&b[1]==0x49&&b[2]==0x46&&b[3]==0x38; // "GIF8"
+}
+
+// ===== 정적 이미지(JPEG/PNG 등) → 리사이즈 + JPEG 압축 =====
+async function transcodeStill(file){
+  const bmp=await createImageBitmap(file);
+  const {w,h}=fitSize(bmp.width,bmp.height);
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h);     // 투명 영역은 검정으로
+  ctx.drawImage(bmp,0,0,w,h);
+  if(bmp.close) bmp.close();
+  let q=0.85, blob=await canvasBlob(cv,'image/jpeg',q);
+  while(blob.size>SAVER_JPEG_MAX && q>0.4){ q-=0.1; blob=await canvasBlob(cv,'image/jpeg',q); }
+  return {blob, name:'saver.jpg'};
+}
+
+// ===== GIF LZW 디코드 =====
+function lzwDecode(data, minCodeSize, pixelCount){
+  const out=new Uint8Array(pixelCount);
+  const clearCode=1<<minCodeSize, eoiCode=clearCode+1;
+  let codeSize=minCodeSize+1, dict=[], bitPos=0, oPos=0, prev=null;
+  const initDict=()=>{ dict=[]; for(let i=0;i<clearCode;i++) dict.push([i]); dict.push(null); dict.push(null); };
+  const readCode=()=>{
+    let code=0;
+    for(let i=0;i<codeSize;i++){
+      const bi=bitPos>>3; if(bi>=data.length) return eoiCode;
+      code |= ((data[bi]>>(bitPos&7))&1)<<i; bitPos++;
+    }
+    return code;
+  };
+  initDict();
+  while(oPos<pixelCount){
+    const code=readCode();
+    if(code==eoiCode) break;
+    if(code==clearCode){ initDict(); codeSize=minCodeSize+1; prev=null; continue; }
+    let entry;
+    if(code<dict.length && dict[code]!=null) entry=dict[code];
+    else if(prev!=null) entry=prev.concat(prev[0]);
+    else break;
+    for(let i=0;i<entry.length && oPos<pixelCount;i++) out[oPos++]=entry[i];
+    if(prev!=null) dict.push(prev.concat(entry[0]));
+    prev=entry;
+    if(dict.length==(1<<codeSize) && codeSize<12) codeSize++;
+  }
+  return out;
+}
+function deinterlace(px,w,h){
+  const out=new Uint8Array(w*h); let row=0;
+  const passes=[[0,8],[4,8],[2,4],[1,2]];
+  for(const [start,step] of passes)
+    for(let y=start;y<h;y+=step){ for(let x=0;x<w;x++) out[y*w+x]=px[row*w+x]; row++; }
+  return out;
+}
+
+// ===== GIF 디코드 + 즉시 320x240 리사이즈(메모리 절약) =====
+function decodeGifResized(buf){
+  const d=new Uint8Array(buf); let p=0;
+  const u8=()=>d[p++], u16=()=>{const v=d[p]|(d[p+1]<<8); p+=2; return v;};
+  if(!(d[0]==0x47&&d[1]==0x49&&d[2]==0x46)) throw new Error('not a gif');
+  p=6;
+  const W=u16(), H=u16(), packed=u8(); u8(); u8();   // bgIndex, aspect 무시
+  const ct=(off,size)=>{ const t=new Array(size); for(let i=0;i<size;i++){const o=off+i*3; t[i]=[d[o],d[o+1],d[o+2]];} return t; };
+  let gct=null;
+  if(packed&0x80){ const sz=2<<(packed&7); gct=ct(p,sz); p+=sz*3; }
+
+  const {w:tw,h:th}=fitSize(W,H);
+  const src=document.createElement('canvas'); src.width=W; src.height=H; const sctx=src.getContext('2d');
+  const dst=document.createElement('canvas'); dst.width=tw; dst.height=th; const dctx=dst.getContext('2d');
+  const srcImg=sctx.createImageData(W,H);
+  const cv=srcImg.data;                              // 누적 합성 캔버스(RGBA), 초기 투명
+  const frames=[];
+  let gce={delay:0,tIndex:-1,disposal:0};
+  let prevD=0, prevRect=null, prevSnap=null;
+
+  const disposeBefore=()=>{
+    if(prevD==3 && prevSnap){ cv.set(prevSnap); }
+    else if(prevD==2 && prevRect){
+      for(let y=prevRect.y;y<prevRect.y+prevRect.h;y++){ if(y<0||y>=H)continue;
+        for(let x=prevRect.x;x<prevRect.x+prevRect.w;x++){ if(x<0||x>=W)continue;
+          const o=(y*W+x)*4; cv[o]=cv[o+1]=cv[o+2]=cv[o+3]=0; } }
+    }
+  };
+  while(p<d.length){
+    const block=u8();
+    if(block==0x3B) break;                            // trailer
+    if(block==0x21){                                  // extension
+      const label=u8();
+      if(label==0xF9){                                // graphic control
+        u8();                                         // block size(4)
+        const pk=u8(); gce.delay=u16()*10; const ti=u8(); u8();
+        gce.disposal=(pk>>2)&7; gce.tIndex=(pk&1)?ti:-1;
+      } else { let s; while((s=u8())!=0) p+=s; }      // 기타 확장 skip
+      continue;
+    }
+    if(block==0x2C){                                  // image descriptor
+      const ix=u16(), iy=u16(), iw=u16(), ih=u16(), ip=u8();
+      let table=gct;
+      if(ip&0x80){ const sz=2<<(ip&7); table=ct(p,sz); p+=sz*3; }
+      const interlace=ip&0x40, minCode=u8();
+      const bytes=[]; let s; while((s=u8())!=0){ for(let i=0;i<s;i++) bytes.push(d[p++]); }
+      let idx=lzwDecode(new Uint8Array(bytes), minCode, iw*ih);
+      if(interlace) idx=deinterlace(idx,iw,ih);
+
+      disposeBefore();
+      const snap = gce.disposal==3 ? cv.slice() : null;   // 그리기 전 스냅샷
+      for(let row=0;row<ih;row++){ const cy=iy+row; if(cy<0||cy>=H)continue;
+        for(let col=0;col<iw;col++){ const cx=ix+col; if(cx<0||cx>=W)continue;
+          const v=idx[row*iw+col]; if(v==gce.tIndex)continue;
+          const c=table&&table[v]; if(!c)continue;
+          const o=(cy*W+cx)*4; cv[o]=c[0];cv[o+1]=c[1];cv[o+2]=c[2];cv[o+3]=255; } }
+
+      // 합성 결과를 320x240로 축소해 저장(투명 영역은 검정 위에 합성)
+      sctx.putImageData(srcImg,0,0);
+      dctx.fillStyle='#000'; dctx.fillRect(0,0,tw,th); dctx.drawImage(src,0,0,tw,th);
+      frames.push({rgba:dctx.getImageData(0,0,tw,th).data, delay:gce.delay||100});
+
+      prevD=gce.disposal; prevRect={x:ix,y:iy,w:iw,h:ih}; prevSnap=snap;
+      gce={delay:0,tIndex:-1,disposal:0};
+      continue;
+    }
+    break;                                            // 알 수 없는 블록
+  }
+  if(!frames.length) throw new Error('gif: no frames');
+  return {w:tw,h:th,frames};
+}
+
+// 프레임 과다 시 균등 솎아내기(딜레이는 합산해 총 재생시간 유지)
+function capFrames(frames,maxF){
+  if(frames.length<=maxF) return frames;
+  const step=frames.length/maxF, out=[];
+  for(let i=0;i<maxF;i++){
+    const a=Math.floor(i*step), b=Math.floor((i+1)*step);
+    let delay=0; for(let j=a;j<b;j++) delay+=frames[j].delay;
+    out.push({rgba:frames[Math.min(frames.length-1,a)].rgba, delay});
+  }
+  return out;
+}
+
+// ===== 색상 양자화(median-cut, 전 프레임 공용 팔레트) =====
+function buildPalette(frames,maxColors){
+  let total=0; for(const f of frames) total+=f.rgba.length/4;
+  const step=Math.max(1,Math.floor(total/16000)), px=[];
+  let c=0;
+  for(const f of frames){ const d=f.rgba;
+    for(let i=0;i<d.length;i+=4){ if((c++%step)==0) px.push([d[i],d[i+1],d[i+2]]); } }
+  if(!px.length) return [[0,0,0]];
+  const box=ps=>{ let r0=255,r1=0,g0=255,g1=0,b0=255,b1=0,rs=0,gs=0,bs=0;
+    for(const q of ps){ if(q[0]<r0)r0=q[0];if(q[0]>r1)r1=q[0];if(q[1]<g0)g0=q[1];if(q[1]>g1)g1=q[1];
+      if(q[2]<b0)b0=q[2];if(q[2]>b1)b1=q[2]; rs+=q[0];gs+=q[1];bs+=q[2]; }
+    const n=ps.length||1;
+    return {ps,rR:r1-r0,gR:g1-g0,bR:b1-b0,avg:[Math.round(rs/n),Math.round(gs/n),Math.round(bs/n)]}; };
+  let boxes=[box(px)];
+  while(boxes.length<maxColors){
+    let bi=-1,best=-1;
+    for(let i=0;i<boxes.length;i++){ const b=boxes[i]; if(b.ps.length<2)continue;
+      const r=Math.max(b.rR,b.gR,b.bR); if(r>best){best=r;bi=i;} }
+    if(bi<0) break;
+    const b=boxes[bi];
+    const ch=b.rR>=b.gR&&b.rR>=b.bR?0:(b.gR>=b.bR?1:2);
+    b.ps.sort((x,y)=>x[ch]-y[ch]);
+    const m=b.ps.length>>1;
+    boxes.splice(bi,1,box(b.ps.slice(0,m)),box(b.ps.slice(m)));
+  }
+  return boxes.map(b=>b.avg);
+}
+function makeMapper(pal){
+  const cache=new Int16Array(32768).fill(-1);
+  return (r,g,b)=>{
+    const key=((r>>3)<<10)|((g>>3)<<5)|(b>>3);
+    let v=cache[key]; if(v>=0) return v;
+    let best=0,bd=1e9;
+    for(let i=0;i<pal.length;i++){ const dr=r-pal[i][0],dg=g-pal[i][1],db=b-pal[i][2];
+      const dd=dr*dr+dg*dg+db*db; if(dd<bd){bd=dd;best=i; if(!dd)break;} }
+    cache[key]=best; return best;
+  };
+}
+
+// ===== GIF89a 인코드 (프레임 간 차분 투명 최적화) =====
+function lzwEncode(idx,minCode,out){
+  const clearCode=1<<minCode, eoiCode=clearCode+1;
+  let codeSize=minCode+1, dict=new Map(), next=clearCode+2;
+  let cur=0,bits=0; const sub=[];
+  const write=code=>{ cur|=code<<bits; bits+=codeSize; while(bits>=8){ sub.push(cur&0xff); cur>>=8; bits-=8; } };
+  out.push(minCode);
+  write(clearCode);
+  let prefix=idx[0];
+  for(let i=1;i<idx.length;i++){
+    const k=idx[i], key=(prefix<<8)|k;
+    if(dict.has(key)){ prefix=dict.get(key); continue; }
+    write(prefix);
+    if(next<4096){ dict.set(key,next++); if(next==(1<<codeSize)&&codeSize<12)codeSize++; }
+    else { write(clearCode); dict=new Map(); next=clearCode+2; codeSize=minCode+1; }
+    prefix=k;
+  }
+  write(prefix); write(eoiCode);
+  if(bits>0) sub.push(cur&0xff);
+  for(let i=0;i<sub.length;i+=255){ const n=Math.min(255,sub.length-i); out.push(n);
+    for(let j=0;j<n;j++) out.push(sub[i+j]); }
+  out.push(0);
+}
+function encodeGif(w,h,frames,pal){
+  const transp=pal.length;                          // 차분 최적화용 투명 인덱스
+  let bits=1; while((1<<bits)<pal.length+1) bits++;  // 투명 슬롯까지 수용
+  const minCode=Math.max(2,bits), tableSize=1<<bits;
+  const out=[];
+  const str=s=>{ for(let i=0;i<s.length;i++) out.push(s.charCodeAt(i)); };
+  str('GIF89a');
+  out.push(w&0xff,(w>>8)&0xff,h&0xff,(h>>8)&0xff);
+  out.push(0x80|((bits-1)<<4)|(bits-1), 0, 0);       // GCT 사용, 색해상도/크기
+  for(let i=0;i<tableSize;i++){ const c=pal[i]||[0,0,0]; out.push(c[0],c[1],c[2]); }
+  out.push(0x21,0xFF,0x0B); str('NETSCAPE2.0'); out.push(0x03,0x01,0x00,0x00,0x00); // 무한 루프
+
+  const map=makeMapper(pal), n=w*h;
+  let displayed=null;                                // 현재 화면에 누적된 인덱스
+  frames.forEach((f,fi)=>{
+    const d=f.rgba, idx=new Uint8Array(n);
+    for(let i=0,pi=0;i<n;i++,pi+=4) idx[i]=map(d[pi],d[pi+1],d[pi+2]);
+    let useTransp=false;
+    if(fi>0){                                        // 이전과 동일 픽셀은 투명 처리
+      for(let i=0;i<n;i++){ if(idx[i]==displayed[i]){ idx[i]=transp; useTransp=true; } else displayed[i]=idx[i]; }
+    } else displayed=idx.slice();
+    const cs=Math.max(2,Math.round(f.delay/10));     // ms→1/100s
+    // graphic control: disposal=1(유지), 필요 시 투명 플래그
+    out.push(0x21,0xF9,0x04, useTransp?0x05:0x04, cs&0xff,(cs>>8)&0xff, useTransp?transp:0, 0x00);
+    out.push(0x2C, 0,0, 0,0, w&0xff,(w>>8)&0xff, h&0xff,(h>>8)&0xff, 0x00); // image descriptor
+    lzwEncode(idx, minCode, out);
+  });
+  out.push(0x3B);
+  return new Uint8Array(out);
+}
+
+async function transcodeGif(file){
+  let gif=decodeGifResized(await file.arrayBuffer());
+  gif.frames=capFrames(gif.frames, SAVER_MAX_FRAMES);
+  const pal=buildPalette(gif.frames, 255);           // 1색은 투명 예약
+  const bytes=encodeGif(gif.w, gif.h, gif.frames, pal);
+  return {blob:new Blob([bytes],{type:'image/gif'}), name:'saver.gif'};
+}
+
+// 업로드 직전 파일 종류 판정 → 적절한 트랜스코더 적용
+async function prepareSaverImage(file){
+  return (await isGifFile(file)) ? transcodeGif(file) : transcodeStill(file);
+}
+
 async function uploadSaverImage(){
   const inp=document.getElementById('saver-file');
   if(!inp.files||!inp.files[0]){alert(t('saver_choose'));return;}
-  const fd=new FormData();fd.append('image',inp.files[0]);
+  const file=inp.files[0];
   const st=document.getElementById('saver-status');
-  st.textContent='...';
+  st.textContent=t('saver_proc');
   try{
+    const prepared=await prepareSaverImage(file);   // 클라이언트에서 리사이즈/압축
+    const fd=new FormData();fd.append('image',prepared.blob,prepared.name);
+    st.textContent=t('saver_up');
     const r=await fetch('/api/saver/image',{method:'POST',body:fd});
     if(r.ok){st.textContent=t('saver_ok');loadSaver();}
     else    {st.textContent=t('saver_fail');}
-  }catch{st.textContent=t('saver_fail');}
+  }catch(e){console.error('[saver] transcode/upload 실패',e);st.textContent=t('saver_fail');}
 }
 async function deleteSaverImage(){
   await fetch('/api/saver/image',{method:'DELETE'});
@@ -1537,8 +1848,9 @@ void setupRoutes() {
     // 이하 모터/레시피 조작 핸들러는 명령 큐로 전달만 한다.
     // 실제 상태 변경은 Core 1 loop()의 drainCmdQueue()에서 수행.
     g_server.on("/api/stop", HTTP_POST, [](AsyncWebServerRequest* req){
-        Cmd c{}; c.type = CMD_STOP;
-        enqueueCmd(c);
+        // 정지는 안전 명령 → 큐(깊이 제한)를 우회해 플래그로 직접 전달.
+        // loop()이 매 사이클 최우선으로 확인하므로 큐가 가득 차도 유실 없음.
+        g_estop = true;
         req->send(200, "application/json", "{\"ok\":true}");
     });
     g_server.on("/api/pause", HTTP_POST, [](AsyncWebServerRequest* req){
@@ -1698,37 +2010,75 @@ void setupRoutes() {
     );
 
     // ── 화면보호기 이미지 업로드 (multipart/form-data, name="image") ──
-    //   확장자(jpg/jpeg → /saver.jpg, gif → /saver.gif) 자동 판정
-    //   기존 다른 확장자 파일은 자동 삭제 (한 종류만 유지)
+    //   파일 내용(매직 바이트)으로 GIF/JPEG 판정 → 확장자에 의존하지 않음.
+    //   iOS Safari는 사진 보관함 업로드 시 filename을 일반 이름(예: image.jpg)으로
+    //   바꾸거나 확장자를 누락시켜, 기존 확장자 기반 판정이 실패했음.
+    //   확장자는 매직 바이트로 판정 실패 시 보조 수단으로만 사용.
+    //   응답은 실제 저장 성공 여부를 반영(이전엔 무조건 ok:true → 거짓 성공 표시).
+    static bool   s_upOk      = false;   // 유효 타입 감지 + 전량 기록 성공 여부
+    static size_t s_upWritten = 0;       // 실제 LittleFS에 기록된 바이트 수
     g_server.on("/api/saver/image", HTTP_POST,
+        // 본문(업로드) 처리 완료 후 호출 → 실제 저장 결과로 응답
         [](AsyncWebServerRequest* req){
-            req->send(200, "application/json", "{\"ok\":true}");
+            if (s_upOk && s_upWritten > 0) {
+                req->send(200, "application/json", "{\"ok\":true}");
+            } else {
+                req->send(415, "application/json",
+                          "{\"ok\":false,\"error\":\"unsupported or empty image\"}");
+            }
+            // 다음 요청을 위해 상태 초기화 (업로드 본문이 없는 요청의 잔상 방지)
+            s_upOk = false; s_upWritten = 0;
         },
         [](AsyncWebServerRequest* req, String filename, size_t index,
            uint8_t* data, size_t len, bool final){
             static String savePath;
             if (index == 0) {
-                String lo = filename; lo.toLowerCase();
-                if (lo.endsWith(".gif")) {
-                    savePath = "/saver.gif";
-                    if (LittleFS.exists("/saver.jpg")) LittleFS.remove("/saver.jpg");
-                } else if (lo.endsWith(".jpg") || lo.endsWith(".jpeg")) {
-                    savePath = "/saver.jpg";
-                    if (LittleFS.exists("/saver.gif")) LittleFS.remove("/saver.gif");
+                s_upOk = false; s_upWritten = 0; savePath = "";
+                // 1) 매직 바이트 우선 판정 (확장자/Content-Type 무관)
+                if (len >= 4 && data[0] == 0x47 && data[1] == 0x49 &&
+                                data[2] == 0x46 && data[3] == 0x38) {
+                    savePath = "/saver.gif";            // "GIF8" → GIF87a/89a
+                } else if (len >= 3 && data[0] == 0xFF && data[1] == 0xD8 &&
+                                       data[2] == 0xFF) {
+                    savePath = "/saver.jpg";            // JPEG SOI 마커
                 } else {
-                    savePath = "";  // 미지원 — 무시
-                    return;
+                    // 2) 폴백: 파일명 확장자
+                    String lo = filename; lo.toLowerCase();
+                    if (lo.endsWith(".gif"))                          savePath = "/saver.gif";
+                    else if (lo.endsWith(".jpg") || lo.endsWith(".jpeg")) savePath = "/saver.jpg";
+                }
+                if (savePath.length() == 0) {
+                    Serial.printf("[Saver] upload rejected (unknown type): %s\n",
+                                  filename.c_str());
+                    return;   // 미지원 — 무시
+                }
+                // 반대 종류 제거 (한 종류만 유지)
+                if (savePath == "/saver.gif") {
+                    if (LittleFS.exists("/saver.jpg")) LittleFS.remove("/saver.jpg");
+                } else {
+                    if (LittleFS.exists("/saver.gif")) LittleFS.remove("/saver.gif");
                 }
                 File f = LittleFS.open(savePath, "w");
                 if (f) f.close();   // 비우기
-                Serial.printf("[Saver] upload start: %s (%s)\n",
+                Serial.printf("[Saver] upload start: %s → %s\n",
                               filename.c_str(), savePath.c_str());
             }
             if (savePath.length() == 0) return;
             File f = LittleFS.open(savePath, "a");
-            if (f) { f.write(data, len); f.close(); }
+            if (f) {
+                size_t w = f.write(data, len);
+                f.close();
+                s_upWritten += w;
+                if (w != len) {
+                    Serial.printf("[Saver] write short: %u/%u bytes (저장공간 부족?)\n",
+                                  (unsigned)w, (unsigned)len);
+                }
+            }
             if (final) {
-                Serial.printf("[Saver] upload done: %u bytes\n", (unsigned)(index + len));
+                // 모든 바이트가 정상 기록됐을 때만 성공으로 간주
+                s_upOk = (s_upWritten == index + len);
+                Serial.printf("[Saver] upload done: %u bytes (ok=%d)\n",
+                              (unsigned)s_upWritten, (int)s_upOk);
             }
         }
     );
@@ -1756,6 +2106,16 @@ void setupRoutes() {
 // setup()
 // ──────────────────────────────────────────────────────────────
 void setup() {
+    // ──────────────────────────────────────────────────────────────
+    // 0) 모터 드라이버 EN 즉시 차단 (★ 물리 손상 방지 — 무조건 가장 먼저)
+    // ──────────────────────────────────────────────────────────────
+    // TMC2209 EN은 active-low. 리셋~setup 도달 구간(+크래시/WDT 리셋)에
+    // PIN_EN이 floating LOW로 떨어지면 드라이버가 enable되어 코일이 통전된
+    // 채 정지 → 발열/소손. 어떤 초기화보다 먼저 OUTPUT+HIGH(차단)로 고정.
+    // (하드웨어 EN→3.3V 10K 풀업과 병행하면 플래싱·무전원 구간까지 안전)
+    pinMode(PIN_EN, OUTPUT);
+    digitalWrite(PIN_EN, HIGH);   // = disableMotor() : 코일 전류 차단
+
     // ──────────────────────────────────────────────────────────────
     // 1) panel 핀 floating 방지 (★ panel 컨트롤러 보호 — 최우선 실행)
     // ──────────────────────────────────────────────────────────────
@@ -1792,7 +2152,7 @@ void setup() {
     // ──────────────────────────────────────────────────────────────
     // 3) TMC2209 / MAX31865 핀 초기화
     // ──────────────────────────────────────────────────────────────
-    pinMode(PIN_EN, OUTPUT);
+    // PIN_EN은 setup() 진입 즉시 차단 완료(위 0번 블록). 여기선 재확인만.
     disableMotor();
 
     // MAX31865 CS 핀을 명시적으로 HIGH로 고정 — 부팅 직후 부유 상태 차단
@@ -1811,11 +2171,11 @@ void setup() {
     Serial.printf("[Stepper] MAX_SPEED=%.0f steps/s (출력축 최대 %.0f RPM)\n",
                   MAX_SPEED, (float)MAX_OUTPUT_RPM);
 
-    // MAX31865 초기화
-    // ※ 3선식 PT100 사용 시: MAX31865_3WIRE 로 변경
-    // ※ 4선식 PT100 사용 시: MAX31865_4WIRE (현재 설정)
-    tempSensor.begin(MAX31865_4WIRE);
-    Serial.println("[MAX31865] 초기화 완료 (4WIRE, RREF=412.0)");
+    // MAX31865 초기화 — 3선식 PT100
+    // ※ 보드 RREF는 실측값 412.0Ω (RREF/RNOMINAL define 참조)
+    // ※ 4선식으로 변경 시: MAX31865_4WIRE + 보드 솔더점퍼도 함께 변경 필요
+    tempSensor.begin(MAX31865_3WIRE);
+    Serial.println("[MAX31865] 초기화 완료 (3WIRE, RREF=412.0)");
 
     // Preferences에서 WiFi 설정 로드
     g_prefs.begin("wifi", true);
@@ -1965,6 +2325,9 @@ void setup() {
 void loop() {
     // 워치독 reset — 6초 이상 loop 멈추면 시스템 자동 리셋
     esp_task_wdt_reset();
+
+    // ── 0) 비상정지 최우선 처리 (큐 우회 — 절대 유실 금지) ──────────────────
+    if (g_estop) { g_estop = false; emergencyStop(); }
 
     // ── 1) 웹 명령 큐 비우기 (모든 모터/레시피 변경은 여기서만) ──────────────
     drainCmdQueue();
