@@ -25,6 +25,11 @@
 #define PIN_TFT_RST   14
 #define PIN_TFT_BL    21
 
+// 예비 후보 핀 — 디스플레이 분리 상태에서 건강한 GPIO 선별용
+//   (DC 이설 대상 GPIO13 + 대안 GPIO8/4/1 동시 측정)
+static const int SPARE_PINS[] = { 13, 8, 4, 1 };
+static const int SPARE_COUNT  = sizeof(SPARE_PINS) / sizeof(SPARE_PINS[0]);
+
 Adafruit_ST7789 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 
 void setup() {
@@ -36,26 +41,35 @@ void setup() {
     //   5초간 DC/CS/RST/SCK/MOSI/BL 모두 0.5초씩 LOW/HIGH 토글.
     //   각 panel 핀에 멀티미터 대고 0V ↔ 3.3V 왕복하는지 확인 가능.
     //   토글 안 되는 핀 = 그 GPIO 또는 와이어 끊김.
-    Serial.println("[PanelTest] === 핀 토글 진단 (10초간 0.5Hz) ===");
+    // ── 측정 모드: 각 레벨을 8초씩 정지 유지 ──
+    //   멀티미터가 안정될 시간 확보 (0.5Hz 토글은 DMM이 못 따라감).
+    //   HIGH 8초 / LOW 8초를 3사이클 → 각 핀에 프로브 대고 천천히 읽기.
+    //   정상: HIGH=3.3V, LOW=0V.  손상 핀: HIGH가 1~2V대에 머무름.
+    Serial.println("[PanelTest] === 핀 레벨 측정 모드 (HIGH 8s / LOW 8s × 3) ===");
     pinMode(PIN_TFT_BL, OUTPUT);
     pinMode(PIN_TFT_RST, OUTPUT);
     pinMode(PIN_TFT_CS, OUTPUT);
     pinMode(PIN_TFT_DC, OUTPUT);
     pinMode(PIN_TFT_SCK, OUTPUT);
     pinMode(PIN_TFT_MOSI, OUTPUT);
-    for (int i = 0; i < 10; i++) {
-        int v = (i & 1) ? HIGH : LOW;
+    for (int i = 0; i < SPARE_COUNT; i++) pinMode(SPARE_PINS[i], OUTPUT);
+    Serial.printf("[PanelTest] 측정 핀: TFT(DC=%d CS=%d RST=%d SCK=%d MOSI=%d BL=%d)"
+                  " + 예비(13/8/4/1)\n",
+                  PIN_TFT_DC, PIN_TFT_CS, PIN_TFT_RST, PIN_TFT_SCK, PIN_TFT_MOSI, PIN_TFT_BL);
+    for (int i = 0; i < 6; i++) {
+        int v = (i & 1) ? LOW : HIGH;   // HIGH로 시작
         digitalWrite(PIN_TFT_BL,   v);
         digitalWrite(PIN_TFT_RST,  v);
         digitalWrite(PIN_TFT_CS,   v);
         digitalWrite(PIN_TFT_DC,   v);
         digitalWrite(PIN_TFT_SCK,  v);
         digitalWrite(PIN_TFT_MOSI, v);
-        Serial.printf("[PanelTest] toggle %d: 모든 핀 = %s\n",
-                      i, v ? "HIGH" : "LOW");
-        delay(500);
+        for (int j = 0; j < SPARE_COUNT; j++) digitalWrite(SPARE_PINS[j], v);
+        Serial.printf("[PanelTest] >>> 지금 모든 핀 = %s (8초 유지, 측정하세요) <<<\n",
+                      v ? "HIGH=3.3V 기대" : "LOW=0V 기대");
+        delay(8000);
     }
-    Serial.println("[PanelTest] === 토글 완료, panel init 시작 ===");
+    Serial.println("[PanelTest] === 측정 완료, panel init 시작 ===");
 
     digitalWrite(PIN_TFT_BL, LOW);
     Serial.println("[PanelTest] step1 BL=LOW");

@@ -1,6 +1,12 @@
 # 라이브러리 배포본 (각자 Arduino Library Manager에서 설치)
 *.zip
 
+# PlatformIO 빌드 산출물
+.pio/
+
+# Claude 세션
+.claude/
+
 # Arduino IDE 빌드 산출물
 build/
 *.bin
