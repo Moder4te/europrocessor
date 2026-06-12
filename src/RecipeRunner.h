@@ -38,6 +38,7 @@ public:
 
     void pauseToggle();
     void confirm();
+    void skipStep();   // 진행 중 현재 단계 건너뛰고 다음 단계로 (확인대기 불문)
 
     bool running()     const { return _running; }
     bool paused()      const { return _paused; }

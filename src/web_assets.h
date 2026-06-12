@@ -1,6 +1,6 @@
 // ================================================================
 //  web_assets.h — 웹 UI (HTML/CSS/JS) PROGMEM 임베드
-//  rotary_processor.ino 의 INDEX_HTML 원문을 그대로 이관 (무수정).
+//  rotary_processor.ino 의 INDEX_HTML 이관 + 이후 기능 추가 반영.
 // ================================================================
 #pragma once
 #include <Arduino.h>
@@ -193,6 +193,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <div class="ctrl-bar">
       <button class="btn btn-success" onclick="startLastRecipe()" data-i18n="btn_start"></button>
       <button class="btn btn-outline" id="btn-pause" onclick="togglePause()" data-i18n="btn_pause"></button>
+      <button class="btn btn-info" id="btn-skip" onclick="doSkip()" data-i18n="btn_skip" style="display:none;"></button>
       <button class="btn btn-danger"  onclick="doStop()" data-i18n="btn_stop"></button>
     </div>
   </div>
@@ -242,7 +243,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
       <button class="btn btn-success" onclick="manualStart(true)">
         <span style="font-size:20px;">▶</span><span data-i18n="dir_fwd_short"></span>
       </button>
-      <button class="btn btn-danger" onclick="doStop()">
+      <button class="btn btn-danger" onclick="doSafeStop()">
         <span style="font-size:20px;">⏹</span><span data-i18n="btn_stop"></span>
       </button>
       <button class="btn btn-info" onclick="manualStart(false)">
@@ -399,7 +400,7 @@ const STR={
     temp_title:'약품 온도',temp_err:'센서 오류',
     recipe_info:'레시피 진행',current_step:'현재 단계',next_step:'다음 단계',
     step_timer:'현재 단계 남은 시간',timeline:'단계 타임라인',
-    btn_start:'▶ 시작',btn_pause:'⏸ 일시정지',btn_resume:'▶ 재개',btn_stop:'⏹ 정지',
+    btn_start:'▶ 시작',btn_pause:'⏸ 일시정지',btn_resume:'▶ 재개',btn_stop:'⏹ 정지',btn_skip:'⏭ 단계 건너뛰기',
     stopwatch:'수동 스톱워치',sw_start:'시작',sw_stop:'정지',sw_reset:'초기화',
     manual_power:'속도 설정',manual_mode_title:'작동 모드',
     auto_cycle:'자동 방향 전환',rot_interval:'방향당 운전 시간 (초)',
@@ -438,7 +439,7 @@ const STR={
     temp_title:'Solution Temp',temp_err:'Sensor Error',
     recipe_info:'Recipe Progress',current_step:'Current Step',next_step:'Next Step',
     step_timer:'Step Remaining',timeline:'Step Timeline',
-    btn_start:'▶ Start',btn_pause:'⏸ Pause',btn_resume:'▶ Resume',btn_stop:'⏹ Stop',
+    btn_start:'▶ Start',btn_pause:'⏸ Pause',btn_resume:'▶ Resume',btn_stop:'⏹ Stop',btn_skip:'⏭ Skip step',
     stopwatch:'Manual Stopwatch',sw_start:'Start',sw_stop:'Stop',sw_reset:'Reset',
     manual_power:'Speed Setting',manual_mode_title:'Operation Mode',
     auto_cycle:'Auto Direction Cycle',rot_interval:'Per-direction Time (sec)',
@@ -574,6 +575,8 @@ function updateStatusUI(){
   const pb=document.getElementById('btn-pause');
   if(sd.recipePause){pb.textContent=t('btn_resume');pb.className='btn btn-success';}
   else{pb.textContent=t('btn_pause');pb.className='btn btn-outline';}
+  // 단계 건너뛰기 — 레시피 진행 중에만 노출(확인대기 중엔 오버레이가 처리)
+  document.getElementById('btn-skip').style.display=(sd.recipeRun&&!sd.waitConfirm)?'':'none';
   const ov=document.getElementById('confirm-overlay');
   if(sd.waitConfirm){
     ov.classList.add('show');
@@ -609,6 +612,8 @@ function renderTimeline(d){
 
 async function togglePause(){await fetch('/api/pause',{method:'POST'});fetchStatus();}
 async function doStop(){await fetch('/api/stop',{method:'POST'});fetchStatus();}
+async function doSafeStop(){await fetch('/api/safestop',{method:'POST'});fetchStatus();}
+async function doSkip(){await fetch('/api/skip',{method:'POST'});fetchStatus();}
 async function doConfirm(){await fetch('/api/confirm',{method:'POST'});fetchStatus();}
 
 function onCycleToggle(){document.getElementById('m-rot-grp').style.display=document.getElementById('m-cycle-chk').checked?'':'none';}

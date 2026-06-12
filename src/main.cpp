@@ -75,6 +75,7 @@ static void dispatch(const Cmd& c) {
         case CmdType::CONFIRM:      recipe.confirm();                           break;
         case CmdType::MANUAL:       manualStart(c.rpm, c.fwd, c.cycle, c.rotSec); break;
         case CmdType::SAFE_STOP:    safeStop();                                 break;
+        case CmdType::SKIP_STEP:    recipe.skipStep();                          break;
     }
 }
 

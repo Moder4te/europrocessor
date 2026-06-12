@@ -325,7 +325,7 @@ static void renderStatusLive() {
     String nxtName   = rs.nextName;
 
     float   t  = s_temp->temperature();
-    uint8_t tf = s_temp->fault();
+    const bool tf = (s_temp->fault() != 0);   // bool 정규화 — 캐시(bool)와 비교 일치
     int tempTenths = tf ? -10000 : (t > -100.0f ? (int)round(t * 10.0f) : -9999);
 
     const char* modeTxt = "IDLE";
@@ -475,20 +475,32 @@ static void renderStatusLive() {
 // ──────────────────────────────────────────────────────────────
 // 기타 페이지
 // ──────────────────────────────────────────────────────────────
+// 레시피 진행 중 PUSH 시 — 2지선다 액션 다이얼로그
+//   cursor 0 = 단계 건너뛰기 / cursor 1 = 레시피 정지 + 메뉴 진입
+static void renderRecipeWarnOpts() {
+    const char* opts[2] = { "Skip to next step", "Stop & exit to menu" };
+    for (int i = 0; i < 2; ++i) {
+        int      y   = 92 + i * 42;
+        bool     sel = (g_ui.cursor == i);
+        uint16_t bg  = sel ? COL_AMBER : COL_BG;
+        uint16_t fg  = sel ? COL_BG    : COL_FG;
+        tft.fillRect(12, y, 296, 34, bg);
+        if (!sel) tft.drawRect(12, y, 296, 34, COL_DGRAY);
+        tft.setTextColor(fg, bg);
+        tft.setTextSize(2);
+        tft.setCursor(24, y + 9);
+        tft.print(sel ? "> " : "  ");
+        tft.print(opts[i]);
+    }
+}
 static void renderRecipeWarnFull() {
     tft.fillScreen(COL_BG);
     drawHeader("RECIPE RUNNING", COL_RED);
-    drawFooter("KO:Stop & enter   PUSH:Cancel", COL_DGRAY);
+    drawFooter("Turn:Select   KO:OK   PUSH:Cancel", COL_DGRAY);
     tft.setTextColor(COL_FG, COL_BG);
     tft.setTextSize(2);
-    tft.setCursor(20, 64);  tft.print("A recipe is running.");
-    tft.setTextColor(COL_AMBER, COL_BG);
-    tft.setCursor(20, 100); tft.print("Stop it and enter");
-    tft.setCursor(20, 124); tft.print("manual mode?");
-    tft.setTextColor(COL_GRAY, COL_BG);
-    tft.setTextSize(1);
-    tft.setCursor(20, 168); tft.print("KO   = confirm (recipe will be stopped)");
-    tft.setCursor(20, 184); tft.print("PUSH = cancel  (back to status)");
+    tft.setCursor(20, 44);  tft.print("Recipe is running.");
+    renderRecipeWarnOpts();
 }
 
 static void renderMenuChrome() {
@@ -626,19 +638,24 @@ static void onStatusOk() {
 }
 
 static void tryEnterMenu() {
-    if (isRecipeRunning()) {
-        changePage(PAGE_RECIPE_WARN);
+    g_ui.cursor = 0;
+    if (isRecipeRunning()) changePage(PAGE_RECIPE_WARN);  // cursor 0 = Skip 기본 선택
+    else                   changePage(PAGE_MENU);
+}
+// 레시피 다이얼로그 KO — 선택한 액션 실행
+static void onRecipeWarnOk() {
+    if (g_ui.cursor == 0) {
+        Cmd c{}; c.type = CmdType::SKIP_STEP;
+        s_cmd->enqueue(c);
+        Serial.println("[UI] Recipe skip step enqueued (from dialog)");
+        changePage(PAGE_STATUS);
     } else {
+        Cmd c{}; c.type = CmdType::STOP;
+        s_cmd->enqueue(c);
+        Serial.println("[UI] Recipe stop enqueued (from dialog)");
         g_ui.cursor = 0;
         changePage(PAGE_MENU);
     }
-}
-static void onRecipeWarnOk() {
-    Cmd c{}; c.type = CmdType::STOP;
-    s_cmd->enqueue(c);
-    Serial.println("[UI] Recipe stop enqueued (from warn dialog)");
-    g_ui.cursor = 0;
-    changePage(PAGE_MENU);
 }
 
 static void onMenuPush() {
@@ -663,7 +680,7 @@ static void onMenuOk() {
             Serial.printf("[UI] Start enqueued: %dRPM %s cyc=%d per=%ds\n", c.rpm, c.fwd?"FWD":"REV", c.cycle, c.rotSec);
             changePage(PAGE_STATUS);
             break;
-        case MIDX_STOP:   c.type=CmdType::STOP; s_cmd->enqueue(c); Serial.println("[UI] Stop enqueued"); break;
+        case MIDX_STOP:   c.type=CmdType::SAFE_STOP; s_cmd->enqueue(c); Serial.println("[UI] Safe stop enqueued"); break;
         case MIDX_DIR:    g_uiSet.fwd   = !g_uiSet.fwd;   g_ui.dirty = true; break;
         case MIDX_CYCLE:  g_uiSet.cycle = !g_uiSet.cycle; g_ui.dirty = true; break;
         case MIDX_SAVER_ON: g_uiSet.saverOn = !g_uiSet.saverOn; saveSaverPrefs(); g_ui.dirty = true; break;
@@ -765,6 +782,7 @@ static void displayTask(void*) {
                 if (oked)   onStatusOk();
                 break;
             case PAGE_RECIPE_WARN:
+                if (delta != 0) { g_ui.cursor = (int8_t)wrapIndex(g_ui.cursor + delta, 2); renderRecipeWarnOpts(); }
                 if (oked)   onRecipeWarnOk();
                 if (pushed) changePage(PAGE_STATUS);
                 break;

@@ -7,24 +7,27 @@ void RecipeRunner::begin() {
 void RecipeRunner::clear() {
     _running = _paused = _waitConfirm = false;
     _stepIdx = 0;
+    // _name 은 String(힙 버퍼) — Core 0 snapshot()이 동시 복사하므로 뮤텍스 안에서만 변경
     if (_mux && xSemaphoreTake(_mux, pdMS_TO_TICKS(10)) == pdTRUE) {
         _steps.clear();
+        _name = "";
         xSemaphoreGive(_mux);
     } else {
         _steps.clear();   // 뮤텍스 미초기화 시(setup 전) 직접 접근
+        _name = "";
     }
-    _name = "";
 }
 
 void RecipeRunner::load(const String& name, const std::vector<StepInfo>& steps) {
     clear();
     if (_mux && xSemaphoreTake(_mux, pdMS_TO_TICKS(50)) == pdTRUE) {
         _steps = steps;
+        _name  = name;
         xSemaphoreGive(_mux);
     } else {
         _steps = steps;
+        _name  = name;
     }
-    _name    = name;
     _running = true;
     startStep(0);
 }
@@ -38,7 +41,8 @@ void RecipeRunner::startStep(int idx) {
         xSemaphoreGive(_mux);
     }
     if (idx >= total) {
-        _motion.stopImmediate();
+        // skip 으로 회전 중에도 도달 가능 — 즉시 정지 대신 감속 정지
+        _motion.requestSafeStop();
         clear();
         Serial.println("[Recipe] 모든 단계 완료");
         return;
@@ -85,6 +89,9 @@ void RecipeRunner::update() {
 
 void RecipeRunner::pauseToggle() {
     if (!_running || _waitConfirm) return;
+    // 단계 종료 감속 중 freeze() 하면 감속완료 이벤트가 유실되어
+    // waitConfirm 으로 못 넘어감 — 곧 확인대기로 전환되므로 무시
+    if (!_paused && _motion.state() == MotorState::STOP_RECIPE) return;
 
     if (!_paused) {
         _pausedMs = millis() - _stepStartMs;
@@ -112,15 +119,23 @@ void RecipeRunner::confirm() {
     }
 }
 
+// 현재 단계를 즉시 종료하고 다음 단계로 진행 (running/paused/waitConfirm 무관).
+// startStep 이 마지막 단계 초과 시 정지+종료를 처리한다.
+void RecipeRunner::skipStep() {
+    if (!_running) return;
+    _waitConfirm = false;
+    startStep(_stepIdx + 1);
+}
+
 RecipeStatus RecipeRunner::snapshot() const {
     RecipeStatus st;
     st.running     = _running;
     st.paused      = _paused;
     st.waitConfirm = _waitConfirm;
-    st.name        = _name;
     st.stepIdx     = _stepIdx;
 
     if (_mux && xSemaphoreTake(_mux, pdMS_TO_TICKS(5)) == pdTRUE) {
+        st.name      = _name;   // String 복사는 뮤텍스 안에서 (clear/load 와 레이스 방지)
         st.stepTotal = (int)_steps.size();
         if (_running && _stepIdx < st.stepTotal) {
             const StepInfo& s = _steps[_stepIdx];

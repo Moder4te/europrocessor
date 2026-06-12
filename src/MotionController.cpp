@@ -17,6 +17,7 @@ void MotionController::begin() {
 }
 
 void MotionController::beginRun(int rpm, bool fwd) {
+    if (!_stepper) return;   // stepperConnectToPin 실패 시 null deref 방지
     if (rpm <= 0) { disableCoils(); _state = MotorState::IDLE; return; }
 
     int   safeRpm = constrain(rpm, (int)Cfg::MIN_OUTPUT_RPM, (int)Cfg::MAX_OUTPUT_RPM);
@@ -57,8 +58,9 @@ void MotionController::requestSafeStop() {
         Serial.println("[Motor] Safe stop requested (decelerating)");
     } else {
         disableCoils();
-        _state  = MotorState::IDLE;
-        _curRpm = 0.0f;
+        _state     = MotorState::IDLE;
+        _curRpm    = 0.0f;
+        _targetRpm = 0;
     }
 }
 
@@ -136,8 +138,9 @@ void MotionController::update() {
         case MotorState::STOP_SAFE:
             if (!_stepper->isRunning()) {
                 disableCoils();
-                _state  = MotorState::IDLE;
-                _curRpm = 0.0f;
+                _state     = MotorState::IDLE;
+                _curRpm    = 0.0f;
+                _targetRpm = 0;   // 정지 후 "target N" 잔존 표시 방지
                 Serial.println("[Motor] Safe stop complete");
             }
             break;

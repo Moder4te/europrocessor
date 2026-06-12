@@ -43,7 +43,8 @@ String WebServer::buildStatus() {
         case MotorState::RUN_FWD: case MotorState::STOP_FWD: dir = "FWD";  break;
         case MotorState::RUN_REV: case MotorState::STOP_REV: dir = "REV";  break;
         case MotorState::REST:                                dir = "REST"; break;
-        case MotorState::STOP_RECIPE:                         dir = "FWD";  break;
+        case MotorState::STOP_RECIPE:  // 감속 중 — 실제 회전 방향 표시
+            dir = _d.motion->isFwd() ? "FWD" : "REV";                       break;
         case MotorState::STOP_SAFE:                           dir = "STOP"; break;
         default: break;
     }
@@ -79,7 +80,8 @@ String WebServer::buildStatus() {
 
 void WebServer::setupRoutes() {
     _server.on("/", HTTP_GET, [](AsyncWebServerRequest* req){
-        req->send(200, "text/html", INDEX_HTML);
+        // 길이 지정 오버로드 → 플래시에서 직접 전송 (String 복사 ~40KB 힙 스파이크 회피)
+        req->send(200, "text/html", (const uint8_t*)INDEX_HTML, sizeof(INDEX_HTML) - 1);
     });
     _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* req){
         req->send(200, "application/json", buildStatus());
@@ -134,6 +136,16 @@ void WebServer::setupRoutes() {
     });
     _server.on("/api/confirm", HTTP_POST, [this](AsyncWebServerRequest* req){
         Cmd c{}; c.type = CmdType::CONFIRM;
+        _d.cmd->enqueue(c);
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+    _server.on("/api/skip", HTTP_POST, [this](AsyncWebServerRequest* req){
+        Cmd c{}; c.type = CmdType::SKIP_STEP;   // 레시피 현재 단계 건너뛰기
+        _d.cmd->enqueue(c);
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+    _server.on("/api/safestop", HTTP_POST, [this](AsyncWebServerRequest* req){
+        Cmd c{}; c.type = CmdType::SAFE_STOP;   // 수동 운전 안전 정지 (감속)
         _d.cmd->enqueue(c);
         req->send(200, "application/json", "{\"ok\":true}");
     });
@@ -192,7 +204,10 @@ void WebServer::setupRoutes() {
             if (newStaPass.length() >= 8) s.staPass = newStaPass;
             _d.wifi->save();
             req->send(200, "application/json", "{\"ok\":true}");
-            delay(200); ESP.restart();
+            // send()는 응답을 저장만 하고 전송은 핸들러 반환 후 — 여기서
+            // delay+restart 하면 응답이 유실된다. 1초 뒤 별도 태스크로 재시작.
+            xTaskCreate([](void*){ vTaskDelay(pdMS_TO_TICKS(1000)); ESP.restart(); },
+                        "reboot", 2048, nullptr, 1, nullptr);
         }
     );
 
