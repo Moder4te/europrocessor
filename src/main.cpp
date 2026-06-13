@@ -23,6 +23,7 @@
 #include "TemperatureSensor.h"
 #include "WifiManager.h"
 #include "WebServer.h"
+#include "RecipeStage.h"
 
 #if UI_DISPLAY_PRESENT
   #include "DisplayUI.h"
@@ -35,6 +36,7 @@ static MotionController  motion;
 static RecipeRunner      recipe(motion);
 static TemperatureSensor temp;
 static CommandQueue       cmd;
+static RecipeStage       stage;     // 웹/디스플레이 → loop 레시피 전달
 static WifiManager       wifi;
 static WebServer         web;
 
@@ -148,6 +150,7 @@ void setup() {
                   (float)Cfg::MAX_SPEED, (float)Cfg::MAX_OUTPUT_RPM);
     recipe.begin();
     cmd.begin(8);
+    stage.begin();
     temp.begin();        // MAX31865 + Core 0 tempTask
 
     wifi.load();
@@ -157,7 +160,7 @@ void setup() {
     // 웹 서버 — 의존성 주입
     WebServer::Deps wd{};
     wd.motion = &motion; wd.recipe = &recipe; wd.temp = &temp;
-    wd.cmd = &cmd; wd.wifi = &wifi;
+    wd.cmd = &cmd; wd.wifi = &wifi; wd.stage = &stage;
 #if UI_DISPLAY_PRESENT
     wd.saver = &display;
 #else
@@ -168,7 +171,7 @@ void setup() {
     configWdt();
 
 #if UI_DISPLAY_PRESENT
-    DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd };
+    DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd, &stage };
     display.begin(dd);
     display.start();
     Serial.println("[Core] DisplayTask → Core 0 시작\n");
@@ -187,11 +190,11 @@ void loop() {
     Cmd c;
     while (cmd.dequeue(c)) dispatch(c);
 
-    // 2) 스테이징 레시피 적용
+    // 2) 스테이징 레시피 적용 (웹/디스플레이 공용 진입점)
     {
         String                name;
         std::vector<StepInfo> steps;
-        if (web.consumeStaged(name, steps)) {
+        if (stage.consume(name, steps)) {
             stopAll();                 // 현재 레시피/모터 정지 후
             recipe.load(name, steps);  // 0단계부터 실행
         }

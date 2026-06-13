@@ -12,6 +12,7 @@
 #include "RecipeRunner.h"
 #include "TemperatureSensor.h"
 #include "CommandQueue.h"
+#include "RecipeStage.h"
 
 class DisplayUI : public ISaver {
 public:
@@ -20,6 +21,7 @@ public:
         RecipeRunner*      recipe;
         TemperatureSensor* temp;
         CommandQueue*      cmd;
+        RecipeStage*       stage;
     };
 
     void begin(const Deps& deps);   // deps 주입 + 화면보호기 prefs 로드

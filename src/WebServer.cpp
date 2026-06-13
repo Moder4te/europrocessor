@@ -7,7 +7,6 @@
 
 void WebServer::begin(const Deps& deps) {
     _d = deps;
-    _stagedMux = xSemaphoreCreateMutex();
     _startBuf.reserve(4096);
 
     // 전역 CORS 헤더 — file:// 또는 외부 오리진(Recipe Editor) API 허용
@@ -18,21 +17,6 @@ void WebServer::begin(const Deps& deps) {
     setupRoutes();
     _server.begin();
     Serial.println("[HTTP] 서버 시작 완료");
-}
-
-bool WebServer::consumeStaged(String& name, std::vector<StepInfo>& steps) {
-    if (!_staged.ready) return false;
-    bool got = false;
-    if (xSemaphoreTake(_stagedMux, pdMS_TO_TICKS(20)) == pdTRUE) {
-        if (_staged.ready) {
-            _staged.ready = false;
-            name  = _staged.name;
-            steps = std::move(_staged.steps);
-            got   = true;
-        }
-        xSemaphoreGive(_stagedMux);
-    }
-    return got;
 }
 
 String WebServer::buildStatus() {
@@ -87,7 +71,7 @@ void WebServer::setupRoutes() {
         req->send(200, "application/json", buildStatus());
     });
 
-    // ── /api/start: 청크 분할 수신 → staging (loop이 consumeStaged) ──
+    // ── /api/start: 청크 분할 수신 → RecipeStage::stage (loop이 consume) ──
     _server.on("/api/start", HTTP_POST,
         [](AsyncWebServerRequest*){}, nullptr,
         [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
@@ -102,25 +86,19 @@ void WebServer::setupRoutes() {
             }
             _startBuf = "";
 
-            if (xSemaphoreTake(_stagedMux, pdMS_TO_TICKS(100)) != pdTRUE) {
-                req->send(503, "application/json", "{\"ok\":false}"); return;
-            }
-            _staged.name = doc["recipeName"] | String("Unknown");
-            _staged.steps.clear();
+            String rname = doc["recipeName"] | String("Unknown");
+            std::vector<StepInfo> steps;
             for (JsonObject s : doc["steps"].as<JsonArray>()) {
                 StepInfo si;
                 si.name      = s["name"]      | String("Step");
                 si.speedRpm  = constrain((int)(s["speedRpm"]    | 50), 1, (int)Cfg::MAX_OUTPUT_RPM);
                 si.durSec    = max((int)(s["durationSec"] | 60), 1);
                 si.rotIntSec = max((int)(s["rotIntSec"]   | 30), 5);
-                _staged.steps.push_back(si);
+                steps.push_back(si);
             }
-            bool empty = _staged.steps.empty();
-            if (!empty) _staged.ready = true;   // 마지막에 플래그 set
-            xSemaphoreGive(_stagedMux);
-
-            if (empty) { req->send(400, "application/json", "{\"ok\":false}"); return; }
-            req->send(200, "application/json", "{\"ok\":true}");
+            bool ok = _d.stage->stage(rname, std::move(steps));
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}" : "{\"ok\":false}");
         }
     );
 
@@ -238,19 +216,13 @@ void WebServer::setupRoutes() {
 
     // ── 화면보호기 설정 ──
     _server.on("/api/saver/settings", HTTP_GET, [this](AsyncWebServerRequest* req){
-        bool hasJpg = LittleFS.exists("/saver.jpg");
-        bool hasGif = LittleFS.exists("/saver.gif");
         size_t imgSize = 0;
         const char* imgType = "none";
-        if (hasGif) {
-            File f = LittleFS.open("/saver.gif", "r");
-            if (f) { imgSize = f.size(); f.close(); }
-            imgType = "gif";
-        } else if (hasJpg) {
-            File f = LittleFS.open("/saver.jpg", "r");
-            if (f) { imgSize = f.size(); f.close(); }
-            imgType = "jpg";
-        }
+        const char* path = nullptr;
+        if      (LittleFS.exists("/saver.anim")) { imgType = "anim"; path = "/saver.anim"; }
+        else if (LittleFS.exists("/saver.gif"))  { imgType = "gif";  path = "/saver.gif";  }
+        else if (LittleFS.exists("/saver.jpg"))  { imgType = "jpg";  path = "/saver.jpg";  }
+        if (path) { File f = LittleFS.open(path, "r"); if (f) { imgSize = f.size(); f.close(); } }
         JsonDocument doc;
         doc["enabled"]    = _d.saver->saverEnabled();
         doc["timeoutSec"] = _d.saver->saverTimeoutSec();
@@ -293,34 +265,36 @@ void WebServer::setupRoutes() {
             static String savePath;
             if (index == 0) {
                 _upOk = false; _upWritten = 0; savePath = "";
-                if (len >= 4 && data[0]==0x47 && data[1]==0x49 && data[2]==0x46 && data[3]==0x38) {
+                if (_upFile) _upFile.close();   // 이전 업로드 잔여 핸들 정리
+                if (len >= 4 && data[0]=='A' && data[1]=='N' && data[2]=='M' && data[3]=='1') {
+                    savePath = "/saver.anim";             // RGB565 프레임 (브라우저 인코딩)
+                } else if (len >= 4 && data[0]==0x47 && data[1]==0x49 && data[2]==0x46 && data[3]==0x38) {
                     savePath = "/saver.gif";              // "GIF8"
                 } else if (len >= 3 && data[0]==0xFF && data[1]==0xD8 && data[2]==0xFF) {
                     savePath = "/saver.jpg";              // JPEG SOI
                 } else {
                     String lo = filename; lo.toLowerCase();
-                    if (lo.endsWith(".gif"))                              savePath = "/saver.gif";
+                    if (lo.endsWith(".anim"))                             savePath = "/saver.anim";
+                    else if (lo.endsWith(".gif"))                         savePath = "/saver.gif";
                     else if (lo.endsWith(".jpg") || lo.endsWith(".jpeg")) savePath = "/saver.jpg";
                 }
                 if (savePath.length() == 0) {
                     Serial.printf("[Saver] upload rejected (unknown type): %s\n", filename.c_str());
                     return;
                 }
-                if (savePath == "/saver.gif") { if (LittleFS.exists("/saver.jpg")) LittleFS.remove("/saver.jpg"); }
-                else                          { if (LittleFS.exists("/saver.gif")) LittleFS.remove("/saver.gif"); }
-                File f = LittleFS.open(savePath, "w");
-                if (f) f.close();
+                // 한 번에 하나만 — 다른 종류 화면보호기 파일 제거
+                const char* others[] = { "/saver.anim", "/saver.gif", "/saver.jpg" };
+                for (const char* o : others) if (savePath != o && LittleFS.exists(o)) LittleFS.remove(o);
+                _upFile = LittleFS.open(savePath, "w");   // 한 번 열고 업로드 내내 유지
                 Serial.printf("[Saver] upload start: %s → %s\n", filename.c_str(), savePath.c_str());
             }
-            if (savePath.length() == 0) return;
-            File f = LittleFS.open(savePath, "a");
-            if (f) {
-                size_t w = f.write(data, len);
-                f.close();
+            if (_upFile) {                                // 청크마다 write만 (open/close 없음)
+                size_t w = _upFile.write(data, len);
                 _upWritten += w;
                 if (w != len) Serial.printf("[Saver] write short: %u/%u (저장공간?)\n", (unsigned)w, (unsigned)len);
             }
             if (final) {
+                if (_upFile) _upFile.close();
                 _upOk = (_upWritten == index + len);
                 Serial.printf("[Saver] upload done: %u bytes (ok=%d)\n", (unsigned)_upWritten, (int)_upOk);
             }
@@ -328,8 +302,8 @@ void WebServer::setupRoutes() {
     );
     _server.on("/api/saver/image", HTTP_DELETE, [](AsyncWebServerRequest* req){
         bool removed = false;
-        if (LittleFS.exists("/saver.jpg")) { LittleFS.remove("/saver.jpg"); removed = true; }
-        if (LittleFS.exists("/saver.gif")) { LittleFS.remove("/saver.gif"); removed = true; }
+        const char* files[] = { "/saver.jpg", "/saver.gif", "/saver.anim" };
+        for (const char* fp : files) if (LittleFS.exists(fp)) { LittleFS.remove(fp); removed = true; }
         req->send(200, "application/json", removed ? "{\"ok\":true}" : "{\"ok\":true,\"noop\":true}");
     });
 

@@ -693,7 +693,8 @@ async function loadSaver(){
     document.getElementById('saver-en-chk').checked=!!d.enabled;
     document.getElementById('saver-timeout-sel').value=String(d.timeoutSec||60);
     const st=document.getElementById('saver-status');
-    if(d.imageType==='gif')      st.textContent=t('saver_has')+' (GIF, '+Math.ceil(d.imageSize/1024)+' KB)';
+    if(d.imageType==='anim')     st.textContent=t('saver_has')+' (애니메이션, '+Math.ceil(d.imageSize/1024)+' KB)';
+    else if(d.imageType==='gif') st.textContent=t('saver_has')+' (GIF, '+Math.ceil(d.imageSize/1024)+' KB)';
     else if(d.imageType==='jpg') st.textContent=t('saver_has')+' (JPEG, '+Math.ceil(d.imageSize/1024)+' KB)';
     else                          st.textContent=t('saver_none');
   }catch{}
@@ -718,7 +719,7 @@ function onSaverTimeoutChange(){
    ────────────────────────────────────────────────────────────── */
 const SAVER_MAXW=320, SAVER_MAXH=240;       // 디스플레이 해상도
 const SAVER_JPEG_MAX=1.5*1024*1024;         // JPEG 목표 상한(초과 시 품질↓)
-const SAVER_MAX_FRAMES=64;                  // GIF 출력 최대 프레임(초과분은 솎음)
+const SAVER_MAX_FRAMES=8;                   // 출력 최대 프레임(초과분 균등 솎음, 딜레이 합산). 용량/업로드 부담 ↓
 
 // 비율 유지하며 320x240 안에 맞춤(확대 없음, 축소만)
 function fitSize(w,h){
@@ -968,9 +969,45 @@ async function transcodeGif(file){
   return {blob:new Blob([bytes],{type:'image/gif'}), name:'saver.gif'};
 }
 
+// ===== GIF → RGB565 프레임(.anim) — 기기 디코드 우회, 브라우저서 직접 인코딩 =====
+// 포맷: "ANM1"+W,H,frames,delay(u16 LE)+frames×W×H×2 RGB565(LE). 기기는 160×120를 2×→320×240.
+const ANIM_W=160, ANIM_H=120;
+async function transcodeAnim(file){
+  let gif=decodeGifResized(await file.arrayBuffer());     // 기존 디코더 재활용(RGBA 프레임)
+  gif.frames=capFrames(gif.frames, SAVER_MAX_FRAMES);
+  const n=gif.frames.length, fbytes=ANIM_W*ANIM_H*2;
+  const src=document.createElement('canvas'); src.width=gif.w; src.height=gif.h;
+  const sctx=src.getContext('2d');
+  const dst=document.createElement('canvas'); dst.width=ANIM_W; dst.height=ANIM_H;
+  const dctx=dst.getContext('2d');
+  const sImg=sctx.createImageData(gif.w,gif.h);
+  const out=new Uint8Array(12 + n*fbytes), dv=new DataView(out.buffer);
+  out[0]=0x41;out[1]=0x4E;out[2]=0x4D;out[3]=0x31;        // "ANM1"
+  dv.setUint16(4,ANIM_W,true); dv.setUint16(6,ANIM_H,true); dv.setUint16(8,n,true);
+  dv.setUint16(10, Math.max(20,Math.min(2000,Math.round(gif.frames[0].delay||70))), true);
+  // 비율 유지 레터박스 — 원본 비율 그대로 중앙 배치, 남는 영역 검정
+  const sc=Math.min(ANIM_W/gif.w, ANIM_H/gif.h);
+  const dw=Math.max(1,Math.round(gif.w*sc)), dh=Math.max(1,Math.round(gif.h*sc));
+  const ox=Math.floor((ANIM_W-dw)/2), oy=Math.floor((ANIM_H-dh)/2);
+  for(let i=0;i<n;i++){
+    sImg.data.set(gif.frames[i].rgba);
+    sctx.putImageData(sImg,0,0);
+    dctx.fillStyle='#000'; dctx.fillRect(0,0,ANIM_W,ANIM_H);     // 레터박스 배경
+    dctx.drawImage(src, 0,0,gif.w,gif.h, ox,oy,dw,dh);           // 비율 유지 중앙
+    const id=dctx.getImageData(0,0,ANIM_W,ANIM_H).data;
+    let off=12+i*fbytes;
+    for(let pix=0;pix<ANIM_W*ANIM_H;pix++){
+      const r=id[pix*4],g=id[pix*4+1],b=id[pix*4+2];     // 원본 색 유지
+      const v=((r>>3)<<11)|((g>>2)<<5)|(b>>3);
+      out[off+pix*2]=v&0xff; out[off+pix*2+1]=(v>>8)&0xff; // LE
+    }
+  }
+  return {blob:new Blob([out],{type:'application/octet-stream'}), name:'saver.anim'};
+}
+
 // 업로드 직전 파일 종류 판정 → 적절한 트랜스코더 적용
 async function prepareSaverImage(file){
-  return (await isGifFile(file)) ? transcodeGif(file) : transcodeStill(file);
+  return (await isGifFile(file)) ? transcodeAnim(file) : transcodeStill(file);
 }
 
 async function uploadSaverImage(){

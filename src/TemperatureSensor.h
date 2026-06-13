@@ -31,4 +31,9 @@ private:
     float    _temp       = Cfg::TEMP_UNREAD;
     uint8_t  _fault      = 0;
     uint16_t _faultCount = 0;     // 연속 fault 카운터
+
+    // 부팅 SPI 자가진단 결과 (begin서 1회 측정 → tempTask가 반복 출력)
+    bool     _spiOk      = false;
+    uint16_t _spiRL      = 0;
+    uint16_t _spiRH      = 0;
 };

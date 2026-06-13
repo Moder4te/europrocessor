@@ -34,16 +34,18 @@ ESP32-S3 기반 **아날로그 필름 현상용 로터리 프로세서** 제어 
 ## 2. 핀 배정
 
 ```
-TMC2209   STEP=GPIO5   DIR=GPIO6   EN=GPIO7   (EN: LOW=코일활성, HIGH=차단)
-MAX31865  CS=GPIO2     MOSI=GPIO38 MISO=GPIO39 CLK=GPIO40  (소프트웨어 SPI)
-ST7789    SCK=GPIO12   MOSI=GPIO11 CS=GPIO10  DC=GPIO9  RST=GPIO14  BL=GPIO21 (FSPI)
-EC11      A=GPIO15     B=GPIO16    PUSH=GPIO17
-KO 버튼   GPIO18
+─ A변 (3v3 쪽) ──────────────────────────────────────────────────
+ST7789    SCK=GPIO12  MOSI=GPIO11  CS=GPIO10  DC=GPIO9  RST=GPIO8  BL=GPIO18 (FSPI)
+EC11      A=GPIO17    B=GPIO16     PUSH=GPIO15
+KO 버튼   GPIO7
+─ B변 (V5in 쪽) ─────────────────────────────────────────────────
+MAX31865  CS=GPIO13   MOSI=GPIO14  MISO=GPIO21  CLK=GPIO47  (소프트웨어 SPI, 연속 4핀)
+TMC2209   EN=GPIO40   DIR=GPIO41   STEP=GPIO42  (EN: LOW=코일활성, HIGH=차단, 연속 3핀)
 ```
 
 핀 상수는 모두 `src/Config.h`의 `namespace Pin`에 `constexpr`로 정의됩니다.
 ESP32-S3 strapping(0/3/45/46), UART0(43/44), USB(19/20), Flash(26~32),
-OPI PSRAM(33~37) 핀은 모두 회피했습니다.
+OPI PSRAM(35~37), RGB LED(48) 핀은 모두 회피했습니다.
 
 ---
 
