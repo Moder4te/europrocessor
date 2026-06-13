@@ -266,6 +266,11 @@ void WebServer::setupRoutes() {
             if (index == 0) {
                 _upOk = false; _upWritten = 0; savePath = "";
                 if (_upFile) _upFile.close();   // 이전 업로드 잔여 핸들 정리
+                // 모터 운전 중 플래시 쓰기 금지 — 인코더 인터럽트와 겹치면 캐시 크래시
+                if (_d.motion->state() != MotorState::IDLE) {
+                    Serial.println("[Saver] upload 거부: 모터 운전 중 (정지 후 재시도)");
+                    return;   // savePath 빈 채 → 파일 안 열고 write 스킵
+                }
                 if (len >= 4 && data[0]=='A' && data[1]=='N' && data[2]=='M' && data[3]=='1') {
                     savePath = "/saver.anim";             // RGB565 프레임 (브라우저 인코딩)
                 } else if (len >= 4 && data[0]==0x47 && data[1]==0x49 && data[2]==0x46 && data[3]==0x38) {
@@ -288,6 +293,13 @@ void WebServer::setupRoutes() {
                 _upFile = LittleFS.open(savePath, "w");   // 한 번 열고 업로드 내내 유지
                 Serial.printf("[Saver] upload start: %s → %s\n", filename.c_str(), savePath.c_str());
             }
+            // 업로드 도중 모터가 기동하면 즉시 중단 — 플래시 write ↔ 인코더 인터럽트 캐시 크래시 회피
+            if (_upFile && _d.motion->state() != MotorState::IDLE) {
+                _upFile.close();
+                if (savePath.length()) LittleFS.remove(savePath);
+                savePath = ""; _upOk = false; _upWritten = 0;
+                Serial.println("[Saver] upload 중단: 업로드 중 모터 기동 (부분파일 삭제)");
+            }
             if (_upFile) {                                // 청크마다 write만 (open/close 없음)
                 size_t w = _upFile.write(data, len);
                 _upWritten += w;
@@ -300,7 +312,11 @@ void WebServer::setupRoutes() {
             }
         }
     );
-    _server.on("/api/saver/image", HTTP_DELETE, [](AsyncWebServerRequest* req){
+    _server.on("/api/saver/image", HTTP_DELETE, [this](AsyncWebServerRequest* req){
+        if (_d.motion->state() != MotorState::IDLE) {   // 모터 운전 중 플래시 삭제 금지
+            req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}");
+            return;
+        }
         bool removed = false;
         const char* files[] = { "/saver.jpg", "/saver.gif", "/saver.anim" };
         for (const char* fp : files) if (LittleFS.exists(fp)) { LittleFS.remove(fp); removed = true; }

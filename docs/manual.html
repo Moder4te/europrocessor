@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>europrocessor — 펌웨어 전체 설명서</title>
+<style>
+  :root{
+    --bg:#0d0f12; --panel:#15181d; --panel2:#1c2026; --fg:#e6e9ee; --dim:#9aa3af;
+    --line:#2a2f37; --amber:#ffb000; --amber-d:#3a2c00; --cyan:#46c7d6; --green:#52c77a;
+    --red:#e0564b; --code:#11141a; --mono:'Consolas','D2Coding','Cascadia Code',monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:'Segoe UI','Malgun Gothic',-apple-system,sans-serif;line-height:1.65;font-size:15px}
+  a{color:var(--amber);text-decoration:none}
+  a:hover{text-decoration:underline}
+  /* layout */
+  .wrap{display:flex;min-height:100vh}
+  nav{position:sticky;top:0;align-self:flex-start;width:264px;height:100vh;overflow-y:auto;
+    background:var(--panel);border-right:1px solid var(--line);padding:20px 0;flex:none}
+  nav .brand{padding:0 20px 14px;border-bottom:1px solid var(--line);margin-bottom:10px}
+  nav .brand b{font-size:17px;color:var(--amber);letter-spacing:.5px}
+  nav .brand span{display:block;color:var(--dim);font-size:12px;margin-top:2px}
+  nav ol{list-style:none;margin:0;padding:0;counter-reset:s}
+  nav ol li a{display:block;padding:6px 20px 6px 20px;color:var(--dim);font-size:13.5px;border-left:2px solid transparent}
+  nav ol li a:hover{color:var(--fg);background:var(--panel2);text-decoration:none}
+  nav ol li a.active{color:var(--amber);border-left-color:var(--amber);background:var(--panel2)}
+  main{flex:1;max-width:920px;margin:0 auto;padding:38px 48px 120px}
+  /* headings */
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:.3px}
+  h1 .v{color:var(--amber);font-size:16px;vertical-align:middle;margin-left:10px;
+    border:1px solid var(--amber);border-radius:4px;padding:1px 8px}
+  .lede{color:var(--dim);font-size:15px;margin:0 0 30px;border-bottom:1px solid var(--line);padding-bottom:22px}
+  section{margin:0 0 46px;scroll-margin-top:20px}
+  h2{font-size:22px;border-bottom:2px solid var(--amber);display:inline-block;
+    padding-bottom:4px;margin:0 0 18px}
+  h2 .n{color:var(--amber);margin-right:8px}
+  h3{font-size:16.5px;color:var(--cyan);margin:26px 0 8px}
+  h4{font-size:14.5px;color:var(--fg);margin:18px 0 6px}
+  p{margin:8px 0}
+  ul,ol.body{margin:8px 0;padding-left:22px}
+  li{margin:3px 0}
+  code{font-family:var(--mono);background:var(--code);color:var(--amber);
+    padding:1px 6px;border-radius:4px;font-size:13px;border:1px solid var(--line)}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.8px;line-height:1.55;color:#cdd3dc}
+  pre code{background:none;border:none;padding:0;color:inherit}
+  pre .c{color:#6b7280}        /* comment */
+  pre .k{color:var(--amber)}   /* key */
+  pre .a{color:var(--cyan)}    /* arrow/accent */
+  /* tables */
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--amber);font-weight:600}
+  tr:nth-child(even) td{background:var(--panel)}
+  td code{font-size:12.4px}
+  /* callouts */
+  .note,.warn,.crit{border-radius:8px;padding:12px 16px;margin:14px 0;border:1px solid;font-size:14px}
+  .note{background:#10212a;border-color:#1d4350;color:#cfeaf0}
+  .note b,.note strong{color:var(--cyan)}
+  .warn{background:#2a2200;border-color:#5a4800;color:#f3e6b8}
+  .warn b,.warn strong{color:var(--amber)}
+  .crit{background:#2a1311;border-color:#5e2620;color:#f3c9c4}
+  .crit b,.crit strong{color:var(--red)}
+  .tag{display:inline-block;font-size:11px;font-family:var(--mono);padding:1px 7px;border-radius:4px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);margin-left:6px;vertical-align:middle}
+  .pill{font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:12px;border:1px solid}
+  .m-get{color:var(--green);border-color:#2f5e40}
+  .m-post{color:var(--amber);border-color:#5a4800}
+  .m-del{color:var(--red);border-color:#5e2620}
+  /* state diagram */
+  .fsm{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0;font-family:var(--mono);font-size:12.5px}
+  .st{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 10px;color:var(--fg)}
+  .st.idle{border-color:#444}.st.run{border-color:#2f5e40;color:var(--green)}
+  .st.stop{border-color:#5a4800;color:var(--amber)}.st.rest{border-color:#1d4350;color:var(--cyan)}
+  .arr{color:var(--dim)}
+  hr{border:none;border-top:1px solid var(--line);margin:40px 0}
+  .footer{color:var(--dim);font-size:13px;text-align:center;border-top:1px solid var(--line);padding-top:22px}
+  .kbd{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);
+    border-bottom-width:2px;border-radius:4px;padding:1px 6px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:880px){.grid2{grid-template-columns:1fr}nav{display:none}main{padding:24px 18px 80px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav id="toc">
+  <div class="brand"><b>europrocessor</b><span>아날로그 필름 로터리 프로세서 · 펌웨어 설명서</span></div>
+  <ol>
+    <li><a href="#overview">개요</a></li>
+    <li><a href="#hw">1 · 하드웨어 사양</a></li>
+    <li><a href="#power">2 · 전원 아키텍처</a></li>
+    <li><a href="#pins">3 · 핀 배정</a></li>
+    <li><a href="#arch">4 · 소프트웨어 아키텍처</a></li>
+    <li><a href="#modules">5 · 모듈 레퍼런스</a></li>
+    <li><a href="#fsm">6 · 모터 상태머신</a></li>
+    <li><a href="#recipe">7 · 레시피 실행 흐름</a></li>
+    <li><a href="#saver">8 · 화면보호기 파이프라인</a></li>
+    <li><a href="#crash">9 · 크래시 분석 &amp; 방지</a></li>
+    <li><a href="#api">10 · 웹 API</a></li>
+    <li><a href="#config">11 · 설정 상수</a></li>
+    <li><a href="#build">12 · 빌드 &amp; 플래시</a></li>
+    <li><a href="#safety">13 · 안전 설계</a></li>
+    <li><a href="#trouble">14 · 트러블슈팅</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>europrocessor<span class="v">v4.1</span></h1>
+<p class="lede">ESP32-S3 기반 <b>아날로그 필름 현상용 로터리 프로세서</b> 제어 펌웨어 전체 설명서.
+스테퍼 모터로 현상 탱크를 정/역 교반하고, 약품 온도를 측정하며, 웹 UI와 물리 디스플레이(TFT + 로터리 인코더)로
+레시피/수동 운전을 제어한다. 단일 <code>.ino</code> 모놀리식에서 <b>PlatformIO 기반 C++ OOP</b>로 이관(v4.0)된 구조 기준.</p>
+
+<!-- ───────────────────────────── -->
+<section id="overview">
+<h2>개요</h2>
+<p>이 펌웨어의 설계 목표는 세 가지다.</p>
+<ul>
+  <li><b>모터 타이밍 보장</b> — 스텝 펄스는 하드웨어 ISR(FastAccelStepper)이 독립 생성하고, 상태머신은 Core 1에 격리되어 WiFi·웹·디스플레이 부하와 무관하게 정/역 교반 타이밍을 유지한다.</li>
+  <li><b>크로스코어 안전성</b> — Core 0(웹/UI)은 모터·레시피 상태를 직접 건드리지 않는다. 모든 조작은 <code>CommandQueue</code>로 전달되어 Core 1 단일 코어에서만 상태가 바뀐다. 레이스를 구조적으로 제거.</li>
+  <li><b>물리 손상 방지</b> — 부팅 즉시 모터 EN 차단·패널 핀 idle 고정, 가속/감속 곡선으로 탈조 방지, 플래시 연산과 인코더 인터럽트의 충돌(캐시 panic) 게이팅.</li>
+</ul>
+<div class="note"><b>읽는 순서.</b> 하드웨어를 만지는 사람은 1~3·13장, 코드를 보는 사람은 4~9장, API를 쓰는 사람은 10장, 빌드는 12장부터 보면 된다. 9장(크래시 분석)은 이 프로젝트에서 가장 비싸게 배운 교훈이라 따로 떼어 두었다.</p></div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="hw">
+<h2><span class="n">1</span>하드웨어 사양</h2>
+<table>
+<tr><th>항목</th><th>사양</th></tr>
+<tr><td><b>MCU</b></td><td>ESP32-S3 N16R8 (16MB Flash / 8MB OPI PSRAM), 듀얼코어 Xtensa LX7</td></tr>
+<tr><td><b>모터</b></td><td>NEMA17 + 3.71:1 유성기어, 1.8°/스텝 (200 step/rev)</td></tr>
+<tr><td><b>드라이버</b></td><td>TMC2209 (STEP/DIR/EN), StealthChop, 1/8 마이크로스텝 → 1600 step/rev</td></tr>
+<tr><td><b>온도센서</b></td><td>MAX31865 + PT100, RREF 412Ω(실측)·RNOMINAL 100Ω — <b>현재 보드 불량으로 코드 격리</b> (<code>Cfg::TEMP_SENSOR_PRESENT=false</code>)</td></tr>
+<tr><td><b>디스플레이</b></td><td>ST7789 320×240 TFT (하드웨어 FSPI) — 패널 색반전 보정 <code>invertDisplay(false)</code></td></tr>
+<tr><td><b>입력</b></td><td>EC11 로터리 인코더(A/B/PUSH) + 확정 버튼(KO)</td></tr>
+<tr><td><b>전원</b></td><td>USB-PD 100W → CH224K 디코이 20V 트리거 → 모터 직결 + 벅(20V→5V)→ESP</td></tr>
+</table>
+
+<h3>속도 계산</h3>
+<p>출력축 RPM을 모터 step/s로 환산하는 식은 <code>MotionController</code>·<code>Config.h</code>에 동일하게 박혀 있다.</p>
+<pre><code><span class="c">// step/s = 출력RPM × 기어비 / 60 × (200 step × 8 마이크로스텝)</span>
+MAX_SPEED = 80 RPM × 3.71 / 60 × 1600  <span class="a">≈ 7,915 step/s</span>
+ACCEL     = 6000 step/s²               <span class="c">// 0→80RPM 약 1.3초</span></code></pre>
+<ul>
+  <li>출력 <b>80RPM = 모터 약 297RPM = 7,915 step/s</b> (<code>MAX_SPEED</code> 상한).</li>
+  <li>80 초과 시 탈조는 코드 결함이 아니라 토크–속도 한계(back-EMF). <b>권장 운전 75RPM</b>.</li>
+  <li>하한 <code>MIN_OUTPUT_RPM=5</code> — 실속(stall) 방지.</li>
+</ul>
+
+<h3>교반 시나리오</h3>
+<div class="fsm">
+  <span class="st run">정방향 rotIntSec 구동</span><span class="arr">→</span>
+  <span class="st stop">감속 정지</span><span class="arr">→</span>
+  <span class="st rest">REST 1초 (EN=HIGH, 코일 차단)</span><span class="arr">→</span>
+  <span class="st run">역방향 구동</span><span class="arr">→ …</span>
+</div>
+<p>무한 반복. REST 구간에 TMC2209 EN을 HIGH로 올려 코일 전류를 끊어 발열을 억제한다. 레시피 모드에서는 각 단계가 <b>속도 / 지속시간 / 방향전환주기</b>를 개별로 가진다.</p>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="power">
+<h2><span class="n">2</span>전원 아키텍처</h2>
+<pre><code>USB-C PD 충전기 (100W)
+   │ USB-C
+   ▼
+[ CH224K ]  USB-PD 디코이/트리거 — CFG 저항으로 20V 선택
+   │ 20V
+   ├───────────────────────────────► TMC2209 VMOT (모터 전원, 직결)
+   │
+   ├─[ 470µF 캐패시터 ]  벌크 — 정/역 전환 트랜지언트 흡수
+   │
+   └──► [ 벅 컨버터 MP1584EN ]  20V → 5V 고정
+            │ 5V
+            ▼
+        ESP32-S3 DevKit ─ 온보드 LDO → 3.3V ─ 로직 / 센서 / 디스플레이 / 인코더</code></pre>
+<table>
+<tr><th>부품</th><th>역할 / 주의</th></tr>
+<tr><td><b>CH224K</b><br>(USB-PD 디코이)</td><td>PD 소스와 협상해 <b>20V 고정</b> 출력. 전압 선택은 <b>CFG 핀 저항</b>으로 설정. 100W(20V/5A) 소스라 모터+로직 피크 전류에 여유 충분.</td></tr>
+<tr><td><b>470µF 캡</b></td><td>20V 레일 벌크 캐패시터. 스테퍼 정/역 전환 시 역기전력·인덕티브 트랜지언트 흡수. (모터발 레일 상승은 +1~2V 수준 — 캡이 충분히 억제)</td></tr>
+<tr><td><b>벅 컨버터</b><br>(20V→5V)</td><td>ESP+디스플레이 공급(부하 ~0.5A). 부하는 가볍지만 <b>강하비가 커 발열·입력마진(MP1584 최대 26V)이 빠듯</b> → 양품 + <b>입력정격 여유 부품(XL4015/LM2596HV 등 36V급) 권장</b>. 과부하가 아닌 개체 불량·발열로 사망 사례 있음.</td></tr>
+</table>
+<div class="note"><b>인러시/핫플러그.</b> PD가 5V→20V로 부드럽게 램프업 + 전류제한을 하므로 별도 NTC/소프트스타트/안티스파크는 <b>불필요</b>. 단, 살아있는 20V 레일에 커넥터 직삽은 지양.</div>
+<div class="warn"><b>비상정지(선택).</b> 물리 전원 스위치는 <b>모터 전원(20V→TMC) 차단용</b>으로 두는 게 안전 — 펌웨어 소프트 e-stop의 물리 백업. 꽂을 땐 ON 유지, 비상시에만 OFF.</div>
+<p>모터는 Core 1 + FastAccelStepper 하드웨어 ISR이라 디스플레이/웹 부하와 무관하게 타이밍을 보장한다. <b>벅이 죽어도 모터 전원(20V 직결)은 영향 없다.</b></p>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="pins">
+<h2><span class="n">3</span>핀 배정</h2>
+<p>핀 상수는 모두 <code>src/Config.h</code>의 <code>namespace Pin</code>에 <code>constexpr</code>로 정의된 단일 진실원이다.</p>
+<pre><code><span class="c">─ A변 (3v3 쪽) ─────────────────────────────────────────</span>
+ST7789    SCK=12  MOSI=11  CS=10  DC=9  RST=8  BL=18   <span class="c">(하드웨어 FSPI)</span>
+EC11      A=17    B=16     PUSH=15
+KO 버튼   7
+<span class="c">─ B변 (V5in 쪽) ────────────────────────────────────────</span>
+MAX31865  CS=13   MOSI=14  MISO=21  CLK=47   <span class="c">(소프트웨어 SPI, 연속 4핀)</span>
+TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활성, HIGH=차단)</span></code></pre>
+<div class="note"><b>회피한 핀.</b> ESP32-S3 strapping(0/3/45/46), UART0(43/44 TX/RX), USB(19/20), Flash(26~32), OPI PSRAM(35~37), RGB LED(48) — 전부 회피했다. 터미널 보드 양변에 기능별로 인접 배치.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="arch">
+<h2><span class="n">4</span>소프트웨어 아키텍처</h2>
+
+<h3>듀얼코어 분리</h3>
+<table>
+<tr><th>코어</th><th>담당</th></tr>
+<tr><td><b>Core 1</b><br>(<code>loop()</code>)</td><td>모터 상태머신 + 레시피 타이밍 (시간 크리티컬). FastAccelStepper 하드웨어 ISR이 스텝 펄스를 독립 생성.</td></tr>
+<tr><td><b>Core 0</b></td><td>WiFi 스택 + AsyncWebServer + <code>tempTask</code>(온도 1Hz) + <code>displayTask</code>(UI ~25Hz)</td></tr>
+</table>
+<div class="crit"><b>핵심 규약.</b> 웹 핸들러·디스플레이(Core 0)는 모터/레시피 상태를 <b>직접 건드리지 않는다.</b> 모든 조작은 <code>CommandQueue</code>로 enqueue → Core 1의 <code>loop()</code>이 dispatch하여 <b>단일 코어에서만</b> 상태를 변경한다. 이로써 stepper·모터·레시피 상태 레이스를 원천 제거.</div>
+
+<h3>크로스코어 동기화 4종</h3>
+<table>
+<tr><th>메커니즘</th><th>용도</th></tr>
+<tr><td><b>CommandQueue</b></td><td>일반 명령(시작/정지/일시정지/확인/수동/스킵)을 FreeRTOS 큐로 직렬 전달 (capacity 8)</td></tr>
+<tr><td><b>비상정지 플래그</b></td><td>큐가 가득 차도 유실되면 안 되므로 큐를 우회하는 <code>volatile</code> 플래그. <code>loop()</code> 최우선 처리.</td></tr>
+<tr><td><b>레시피 스테이징</b></td><td><code>/api/start</code>는 뮤텍스 보호 버퍼(<code>RecipeStage</code>)에 적재만 하고, <code>loop()</code>이 안전한 시점에 <code>consume()</code>하여 적용</td></tr>
+<tr><td><b>뮤텍스</b></td><td>온도 스냅샷 / 레시피 <code>steps</code> 벡터 / 스테이징 버퍼를 각각 보호</td></tr>
+</table>
+
+<h3>loop() 한 사이클</h3>
+<pre><code><span class="k">0)</span> cmd.consumeEstop()  <span class="a">→</span> stopAll()        <span class="c">// 비상정지 최우선 (큐 우회)</span>
+<span class="k">1)</span> while cmd.dequeue(c) <span class="a">→</span> dispatch(c)      <span class="c">// 모든 모터/레시피 변경은 여기서만</span>
+<span class="k">2)</span> stage.consume()     <span class="a">→</span> stopAll()+load()  <span class="c">// 스테이징 레시피 적용</span>
+<span class="k">3)</span> wifi.processDns(); motion.update(); recipe.update();  <span class="c">// 비차단 업데이트</span></code></pre>
+
+<h3>모듈 구성 (<code>src/</code>)</h3>
+<pre><code>main.cpp              App 코디네이터 — 객체 소유·배선, setup/loop, 상태 전이
+Config.h              핀/물리 상수 (Pin:: / Cfg::, constexpr 단일 진실원)
+Types.h               공유 도메인 타입 (MotorState, StepInfo, CmdType, Cmd)
+CommandQueue.h        크로스코어 명령 큐 + 비상정지 플래그
+RecipeStage.h         크로스코어 레시피 스테이징 버퍼 (뮤텍스)
+ISaver.h              화면보호기 설정 인터페이스 (+ 무디스플레이용 NullSaver)
+MotionController.*     TMC2209 스테퍼 상태머신 (레시피 무관)
+RecipeRunner.*         레시피 단계 시퀀서 (steps + 뮤텍스 소유)
+TemperatureSensor.*    MAX31865 — Core 0 태스크, 뮤텍스 보호
+WifiManager.*          AP+STA 동시 모드, DNS/mDNS, Preferences
+WebServer.*            ESPAsyncWebServer 라우트 + 상태 JSON + 스테이징
+web_assets.h          웹 UI HTML/CSS/JS (PROGMEM 임베드)
+DisplayUI.*            ST7789 + 인코더 + 버튼 UI (Core 0 태스크, ISaver 구현)
+nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flash 상수)</code></pre>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="modules">
+<h2><span class="n">5</span>모듈 레퍼런스</h2>
+
+<h3><code>main.cpp</code> — App 코디네이터</h3>
+<p>모든 서브시스템 객체를 소유하고 참조를 주입해 배선한다. 시스템 상태 전이는 여기에 집약된다.</p>
+<table>
+<tr><th>함수</th><th>역할</th></tr>
+<tr><td><code>stopAll()</code></td><td>비상정지 — 모터 즉시 정지 + 레시피 clear + 모드 리셋(manual off, cycle on)</td></tr>
+<tr><td><code>safeStop()</code></td><td>가속도 곡선 따라 감속 후 정지 (탈조·관성 충격 없음)</td></tr>
+<tr><td><code>manualStart(rpm,fwd,cycle,rotSec)</code></td><td>수동 운전 시작</td></tr>
+<tr><td><code>dispatch(Cmd)</code></td><td>큐에서 꺼낸 명령을 위 함수로 분기</td></tr>
+<tr><td><code>safePinInit()</code></td><td><b>setup 최우선</b> — EN=HIGH(코일 차단), 패널 핀 idle 고정, 입력 풀업</td></tr>
+<tr><td><code>setup()</code></td><td>핀 안전 고정 → 서브시스템 init → 태스크 기동. WDT 6초.</td></tr>
+<tr><td><code>loop()</code></td><td>위 「loop() 한 사이클」 참조 (Core 1)</td></tr>
+</table>
+
+<h3><code>MotionController</code> — 모터 상태머신</h3>
+<p>FastAccelStepper로 펄스를 생성하고 EN 핀은 수동 제어(REST 구간 코일 차단). <b>레시피를 모른다</b> — 단계 종료는 <code>requestStepStop()</code>으로 받고, 감속 완료는 <code>takeStepStopped()</code> 이벤트로 알린다. 모든 상태 변경은 Core 1에서만.</p>
+<table>
+<tr><th>API</th><th>설명</th></tr>
+<tr><td><code>beginRun(rpm,fwd)</code></td><td>출력축 RPM·방향으로 구동 시작</td></tr>
+<tr><td><code>stopImmediate()</code></td><td>비상: forceStop + EN 차단 + IDLE (targetRpm=0)</td></tr>
+<tr><td><code>freeze()</code></td><td>일시정지: halt + EN 차단 + IDLE (targetRpm 유지)</td></tr>
+<tr><td><code>requestSafeStop()</code></td><td>가속도 곡선 감속 후 IDLE</td></tr>
+<tr><td><code>requestStepStop()</code> / <code>takeStepStopped()</code></td><td>레시피 단계 종료 감속 요청 / 완료 1회성 이벤트</td></tr>
+<tr><td><code>state() · curRpm() · targetRpm() · isFwd() · cycle()</code></td><td>상태 조회 (const)</td></tr>
+</table>
+
+<h3><code>RecipeRunner</code> — 레시피 시퀀서</h3>
+<p><code>steps</code> 벡터를 뮤텍스로 보호(웹 <code>buildStatus</code>가 Core 0에서 동시 읽기)하며, 모터는 <code>MotionController</code> 경유로만 구동한다.</p>
+<pre><code>load() <span class="a">→</span> startStep(0) <span class="a">→</span> 단계 지속시간 경과 시 requestStepStop()
+       <span class="a">→</span> 감속 완료(takeStepStopped) <span class="a">→</span> waitConfirm(약품 교체 대기)
+       <span class="a">→</span> confirm() <span class="a">→</span> 다음 단계 …</code></pre>
+<p>그 외: <code>pauseToggle()</code> · <code>skipStep()</code>(현재 단계 건너뜀) · <code>snapshot()</code>(표시용 상태 스냅샷, 뮤텍스 밖 안전 사용).</p>
+
+<h3><code>TemperatureSensor</code> — 온도 측정</h3>
+<p>Core 0 전용 태스크에서 MAX31865를 1Hz 폴링(소프트웨어 SPI). 모터 코어에 영향 없음. fault는 즉시 clear하지 않고 <b>연속 5회 누적 후에만</b> 시도 → 단선/접촉불량을 UI에서 끊김 없이 관찰.</p>
+<ul>
+  <li><b>결선 모드</b>: <code>Cfg::RTD_WIRES</code>(2/3/4) — 보드 솔더점퍼와 일치 필수.</li>
+  <li><b>진단</b>: 부팅 시 threshold 레지스터 SPI 라운드트립 자가진단(칩·통신 검증) + fault 비트 디코드 + raw RTD 출력.</li>
+  <li><b>격리</b>: <code>TEMP_SENSOR_PRESENT=false</code>면 init·폴링 태스크 미생성 → <code>temperature()=TEMP_UNREAD</code>, fault 없음(디스플레이 <code>--.-</code>). <i>현재 센서 보드 불량으로 격리됨 — 양품 장착 시 <code>true</code> 복귀.</i></li>
+</ul>
+
+<h3><code>WifiManager</code> — 네트워크</h3>
+<p>AP+STA 동시 모드. AP <code>http://192.168.4.1</code>, mDNS <code>http://europrocessor.local</code>, AP DNS(captive). STA 자동 재연결 이벤트 처리. 설정은 Preferences <code>wifi</code> 네임스페이스에 영구 저장.</p>
+
+<h3><code>WebServer</code> — HTTP</h3>
+<p>ESPAsyncWebServer 기반. HTML은 <code>web_assets.h</code>에 PROGMEM 임베드. 의존성(motion/recipe/temp/cmd/wifi/saver)을 <code>begin()</code>에서 주입받아 소유하지 않는다. 대용량 JSON(<code>/api/start</code>, 레시피 저장)은 청크 분할 수신 + reserve로 힙 단편화를 억제. 화면보호기 업로드는 파일핸들(<code>_upFile</code>)을 한 번 열고 청크마다 write만 한다.</p>
+
+<h3><code>DisplayUI</code> — 물리 UI</h3>
+<p>ST7789 320×240 + EC11 인코더 + KO 버튼. U8g2로 한글 UTF-8 폰트 출력. 캐시 기반 부분 렌더링으로 깜빡임 제거. <code>initTft</code>에서 <b><code>invertDisplay(false)</code>로 패널 색반전 보정</b>(이 패널은 INVON이 색을 네거티브로 반전). <code>ISaver</code>를 구현해 웹에서 화면보호기 설정을 읽고 쓴다.</p>
+<p>페이지: STATUS / 레시피경고 / 수동메뉴 / 속도·주기·화면보호기시간 편집 / 정보 / 화면보호기. (자세한 화면보호기 동작은 <a href="#saver">8장</a>)</p>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="fsm">
+<h2><span class="n">6</span>모터 상태머신</h2>
+<p><code>MotorState</code> (<code>Types.h</code>) — 교반 사이클은 정방향·역방향 사이에 항상 REST(코일 차단)를 둔다.</p>
+<div class="fsm">
+  <span class="st idle">IDLE</span><span class="arr">→</span>
+  <span class="st run">RUN_FWD</span><span class="arr">→</span>
+  <span class="st stop">STOP_FWD</span><span class="arr">→</span>
+  <span class="st rest">REST</span><span class="arr">→</span>
+  <span class="st run">RUN_REV</span><span class="arr">→</span>
+  <span class="st stop">STOP_REV</span><span class="arr">→</span>
+  <span class="st rest">REST</span><span class="arr">→ …</span>
+</div>
+<table>
+<tr><th>상태</th><th>의미</th></tr>
+<tr><td><code>IDLE</code></td><td>정지</td></tr>
+<tr><td><code>RUN_FWD / RUN_REV</code></td><td>정 / 역방향 정속</td></tr>
+<tr><td><code>STOP_FWD / STOP_REV</code></td><td>해당 방향 감속 → REST</td></tr>
+<tr><td><code>REST</code></td><td>방향전환 휴지 — EN=HIGH (코일 전류 차단, 발열 억제), <code>REST_MS=1000</code></td></tr>
+<tr><td><code>STOP_RECIPE</code></td><td>레시피 단계 종료 감속 → <code>waitConfirm</code></td></tr>
+<tr><td><code>STOP_SAFE</code></td><td>안전 정지 감속 → IDLE (다음 사이클 없음)</td></tr>
+</table>
+<div class="note"><b>cycle 플래그.</b> <code>setCycle(false)</code>면 한 방향 구동 후 자동 방향전환을 하지 않는다. 수동 운전에서 단방향 회전이 필요할 때 사용.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="recipe">
+<h2><span class="n">7</span>레시피 실행 흐름</h2>
+<p>레시피는 <code>StepInfo</code> 배열(<code>name / speedRpm / durSec / rotIntSec</code>)이다. 웹에서 시작하면 곧장 실행되지 않고 스테이징을 거친다.</p>
+<pre><code><span class="c">[Core 0] 웹 POST /api/start</span>     <span class="a">→</span>  stage.stage(name, steps)   <span class="c">// 뮤텍스 버퍼 적재만</span>
+<span class="c">[Core 1] loop()</span>                  <span class="a">→</span>  stage.consume()            <span class="c">// 안전한 시점에 꺼냄</span>
+                                <span class="a">→</span>  stopAll() + recipe.load()  <span class="c">// 기존 정지 후 0단계 실행</span>
+
+각 단계:  startStep(idx) <span class="a">→</span> durSec 경과 <span class="a">→</span> requestStepStop()
+          <span class="a">→</span> takeStepStopped() <span class="a">→</span> waitConfirm <span class="a">→</span> confirm() <span class="a">→</span> 다음 단계</code></pre>
+<ul>
+  <li><b>waitConfirm</b> — 단계 사이에 약품 교체를 위해 사용자 확인을 기다린다. 웹 <code>/api/confirm</code> 또는 디스플레이 OK.</li>
+  <li><b>skipStep</b> — 확인대기 여부와 무관하게 현재 단계를 건너뛰고 다음으로.</li>
+  <li><b>pauseToggle</b> — 진행 중 일시정지/재개. 경과시간 보정.</li>
+</ul>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="saver">
+<h2><span class="n">8</span>화면보호기 파이프라인</h2>
+<p>온디바이스 GIF 디코드(AnimatedGIF)는 이 빌드에서 실패했다(프레임1 부분 + err=1, 파일/RAM open 무관). 따라서 <b>라이브러리와 관련 코드를 전부 제거</b>하고, <b>브라우저에서 사전 인코딩</b>한 RGB565 프레임을 기기는 디코드 없이 blit하는 방식으로 전환했다.</p>
+
+<h3>업로드 경로 — 브라우저 트랜스코드</h3>
+<pre><code><span class="c">[브라우저 web_assets.h]</span>
+ GIF 파일 선택 <span class="a">→</span> decodeGifResized() <span class="a">→</span> 160×120 리사이즈(비율 유지 레터박스)
+ <span class="a">→</span> RGB565 LE 변환 <span class="a">→</span> 최대 8프레임 강제 <span class="a">→</span> "ANM1" 컨테이너 조립
+ <span class="a">→</span> POST /api/saver/image
+<span class="c">[기기 DisplayUI.cpp]</span>
+ loadAnim() <span class="a">→</span> PSRAM 적재·검증 <span class="a">→</span> blitFrame2x() 2×→320×240 (순수 blit, 디코드 없음)</code></pre>
+
+<h3><code>.anim</code> 포맷 (ANM1)</h3>
+<table>
+<tr><th>오프셋</th><th>크기</th><th>내용</th></tr>
+<tr><td>0</td><td>4 B</td><td>매직 <code>"ANM1"</code></td></tr>
+<tr><td>4</td><td>2 B</td><td>W (u16 LE, ≤160)</td></tr>
+<tr><td>6</td><td>2 B</td><td>H (u16 LE, ≤120)</td></tr>
+<tr><td>8</td><td>2 B</td><td>frames (u16 LE, ≥1)</td></tr>
+<tr><td>10</td><td>2 B</td><td>delay ms (u16 LE, 최소 20)</td></tr>
+<tr><td>12</td><td>frames×W×H×2</td><td>RGB565 LE 픽셀 데이터</td></tr>
+</table>
+<p>기기는 <code>loadAnim()</code>에서 <code>12 + frames×W×H×2 == 파일크기</code>를 검증하고 PSRAM(<code>ps_malloc</code>)에 통째로 올린다. 검증 실패 시 모든 경로에서 <code>free</code>.</p>
+
+<h3>우선순위</h3>
+<div class="fsm">
+  <span class="st run">① /saver.anim (업로드 애니)</span><span class="arr">&gt;</span>
+  <span class="st stop">② /saver.jpg (정적 JPEG)</span><span class="arr">&gt;</span>
+  <span class="st rest">③ 임베드 Nyan (기본)</span>
+</div>
+<p>임베드 Nyan은 <code>tools/gen_nyan.py</code>가 생성한 <code>nyan_frames.h</code>(160×120×12, flash 상수, RAM 0). 무압축 RAW이므로 용량 = dims×frames×2 (색 무관) — 줄이려면 frames/dims를 줄인다.</p>
+<div class="warn"><b>전원 OFF 시 유지.</b> 업로드한 <code>/saver.anim</code>·<code>/saver.jpg</code>는 LittleFS에 영구 저장되어 재부팅해도 유지된다. 삭제는 <code>DELETE /api/saver/image</code>.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="crash">
+<h2><span class="n">9</span>크래시 분석 &amp; 방지</h2>
+<div class="crit"><b>증상.</b> 모터 회전 중 화면보호기 진입·이미지 업로드·삭제 시 간헐적 <code>Guru Meditation Error: Cache disabled but cached memory region accessed</code> (Core 1 panic, reset reason 4). 처음엔 브라운아웃으로 오진했으나 WiFi 미사용 중에도 발생 → panic 확정.</p></div>
+
+<h3>근본 원인</h3>
+<p>LittleFS 읽기/쓰기·WiFi NVS 같은 <b>플래시 연산은 순간 캐시를 끈다</b>. 그 창에 ISR이나 코드가 플래시 영역(<code>.rodata</code>, 플래시 상주 함수)을 건드리면 패닉한다. 여기서는 <b>모터 EMI로 유발된 인코더 GPIO 인터럽트</b>가 그 트리거였다.</p>
+<pre><code><span class="c">충돌 시나리오</span>
+모터 회전 → EMI → 인코더 핀 엣지 → encISR 발생
+          ↘ 그 순간 화면보호기 loadAnim()이 LittleFS read 중 (캐시 OFF)
+          → ISR/디스패처가 플래시 접근 → Cache disabled panic</code></pre>
+
+<h3>적용한 방어</h3>
+<table>
+<tr><th>계층</th><th>조치</th></tr>
+<tr><td>ISR IRAM-safe화</td><td><code>encISR</code>이 <code>REG_READ(GPIO_IN_REG)</code> 직접 읽기 + <code>DRAM_ATTR</code> 디코드 테이블 사용 (플래시 함수·<code>.rodata</code> 회피)</td></tr>
+<tr><td><b>플래시op 게이팅</b><br>(최종 차단)</td><td>모터 <b>비-IDLE이면 모든 플래시 연산 금지</b>:<br>· 화면보호기 진입/렌더 안 함 (loadAnim 차단)<br>· 업로드 시작 거부 + <b>진행 중 모터 기동 시 중단·부분파일 삭제</b><br>· 삭제 409 응답</td></tr>
+</table>
+<div class="note"><b>왜 PCNT 인코더로 안 바꿨나.</b> 하드웨어 PCNT 카운터로 옮기면 ISR 자체를 없앨 수 있지만, FastAccelStepper가 ESP32-S3 스텝 생성에 PCNT(MCPWM_PCNT)를 점유한다. 인코더용 PCNT가 모터와 충돌해 <b>둘 다 깨졌다</b> → 인터럽트 인코더 유지 + 게이팅으로 결론.</div>
+<div class="warn"><b>새 ISR/플래시op 추가 시 원칙.</b> ① ISR은 IRAM-safe(<code>IRAM_ATTR</code> 함수 + <code>DRAM_ATTR</code> 데이터 + 레지스터 직접 접근). ② LittleFS/NVS 등 플래시op는 <b>모터 IDLE일 때만</b> 수행.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="api">
+<h2><span class="n">10</span>웹 API</h2>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/</code></td><td>웹 UI (HTML)</td></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/api/status</code></td><td>모터/레시피/온도/STA 상태 JSON</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/start</code></td><td>레시피 시작 (steps 배열, 청크 수신 → 스테이징)</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/stop</code></td><td>비상정지 (큐 우회 플래그)</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/pause</code></td><td>일시정지/재개 토글</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/confirm</code></td><td>다음 단계 확인 (약품 교체 후 진행)</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/manual</code></td><td>수동 운전 (속도/방향/사이클/주기)</td></tr>
+<tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/settings</code></td><td>WiFi 설정 조회/저장 (저장 시 재부팅)</td></tr>
+<tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/recipes/load</code> · <code>/save</code></td><td>레시피 JSON 불러오기/저장 (LittleFS, 원자적 교체)</td></tr>
+<tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/saver/settings</code></td><td>화면보호기 활성/타임아웃</td></tr>
+<tr><td><span class="pill m-post">POST</span> <span class="pill m-del">DELETE</span></td><td><code>/api/saver/image</code></td><td>화면보호기 업로드(매직바이트로 JPEG/GIF/<code>ANM1</code> 판정 → <code>/saver.{jpg,gif,anim}</code>)/삭제. <b>모터 운전 중 차단</b>(업로드 거부·진행 중 중단, 삭제 409 — 플래시op 크래시 회피)</td></tr>
+</table>
+<p><code>/api/status</code>의 JSON 키와 HTML은 마이그레이션 전후로 동일하여 프론트엔드는 변경 없이 동작한다.</p>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="config">
+<h2><span class="n">11</span>설정 상수 (<code>Config.h</code>)</h2>
+<table>
+<tr><th>상수</th><th>값</th><th>의미</th></tr>
+<tr><td><code>Cfg::STEPS_PER_REV</code></td><td>1600</td><td>200 step × 8 마이크로스텝</td></tr>
+<tr><td><code>Cfg::GEAR_RATIO</code></td><td>3.71</td><td>유성기어비</td></tr>
+<tr><td><code>Cfg::MAX_OUTPUT_RPM</code></td><td>80</td><td>탈조 한계 기반 상한</td></tr>
+<tr><td><code>Cfg::MIN_OUTPUT_RPM</code></td><td>5</td><td>실속 방지 하한</td></tr>
+<tr><td><code>Cfg::MAX_SPEED</code></td><td>≈7915 step/s</td><td>80RPM 환산 (파생)</td></tr>
+<tr><td><code>Cfg::ACCEL</code></td><td>6000 step/s²</td><td>0→80RPM 약 1.3초</td></tr>
+<tr><td><code>Cfg::REST_MS</code></td><td>1000</td><td>방향전환 휴지 (TMC 열관리)</td></tr>
+<tr><td><code>Cfg::TEMP_SENSOR_PRESENT</code></td><td><b>false</b></td><td>온도센서 활성. false면 init·태스크 미생성 (현재 보드 불량 격리)</td></tr>
+<tr><td><code>Cfg::RREF</code> / <code>RNOMINAL</code></td><td>412 / 100 Ω</td><td>MAX31865 기준저항 / PT100 공칭</td></tr>
+<tr><td><code>Cfg::TEMP_FAULT_CLEAR_AFTER</code></td><td>5</td><td>연속 fault N회 후만 clear</td></tr>
+<tr><td><code>Cfg::RTD_WIRES</code></td><td>2 / 3 / 4</td><td>RTD 결선 모드 — <b>보드 솔더점퍼와 일치 필수</b></td></tr>
+<tr><td><code>Cfg::TEMP_UNREAD</code></td><td>-999.0</td><td>미독취 센티넬</td></tr>
+</table>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="build">
+<h2><span class="n">12</span>빌드 &amp; 플래시 (PlatformIO)</h2>
+<pre><code>pio run                 <span class="c"># 빌드</span>
+pio run -t upload       <span class="c"># 펌웨어 업로드</span>
+pio device monitor      <span class="c"># 시리얼 모니터 (115200)</span></code></pre>
+<ul>
+  <li><code>data/</code> 폴더가 없으므로 <code>uploadfs</code>는 불필요 (레시피·화면보호기는 런타임 생성).</li>
+  <li>시리얼 로그가 안 보이면 보드 <span class="kbd">EN/RESET</span>을 한 번 누른다 (USB-CDC 재연결 타이밍).</li>
+</ul>
+<h3>빌드 플래그</h3>
+<table>
+<tr><th>플래그</th><th>의미</th></tr>
+<tr><td><code>UI_DISPLAY_PRESENT=1</code></td><td>디스플레이 결선 여부. <code>0</code>이면 <code>displayTask</code> 미생성(무디스플레이 변종)</td></tr>
+<tr><td><code>BOARD_HAS_PSRAM</code> + <code>memory_type=qio_opi</code></td><td>N16R8 OPI PSRAM 활성</td></tr>
+<tr><td><code>ARDUINO_USB_CDC_ON_BOOT=1</code></td><td>네이티브 USB 포트로 Serial 출력</td></tr>
+<tr><td><code>CORE_DEBUG_LEVEL=0</code></td><td>코어 로그 억제 (디버깅 시 3)</td></tr>
+</table>
+<div class="note"><b>버전 고정.</b> <code>platform espressif32 @ 7.0.1</code> + <code>lib_deps</code> 전부 버전 핀(2026-06-12 검증). Arduino-ESP32 2.0.17 / IDF 4.4 — 레거시 드라이버만 존재(<code>driver/pulse_cnt.h</code> 없음). 업그레이드 시 버전만 올리고 <code>pio run</code> 재검증. <code>partitions.csv</code> = 3MB APP ×2 (OTA) + 9.9MB LittleFS.</div>
+<h3>도구</h3>
+<p><code>tools/gen_nyan.py</code> — GIF → RGB565 프레임 헤더(<code>src/nyan_frames.h</code>) 생성. LANCZOS 160×120 리사이즈, 프레임/딜레이 자동 추출. <code>python -m pip install Pillow</code> 필요.</p>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="safety">
+<h2><span class="n">13</span>안전 설계 (물리 손상 방지)</h2>
+<ul>
+  <li><b>부팅 즉시 TMC2209 EN=HIGH</b> — 리셋~setup 구간 floating으로 코일이 통전된 채 정지하면 발열/소손. 권장 HW 풀업: EN→3.3V 10K.</li>
+  <li><b>부팅 즉시 패널 신호 핀 idle 고정</b> — floating noise가 패널 컨트롤러를 비정상 state로 몰아 ESD/latch-up 손상 누적 방지. 권장 HW 풀업: TFT CS·RST→3.3V 10K.</li>
+  <li><b>디스플레이 배선 주의</b> — 신호선을 5V(VBUS) 근처로 라우팅하지 말 것. 5V가 신호핀에 닿으면 내부 ESD 다이오드를 통해 VCC 레일로 역주입되어 컨트롤러/백라이트가 손상될 수 있음 (실손상 사례 있음).</li>
+  <li><b>탈조 방지</b> — 모든 시작/정지/방향전환은 <code>AccelStepper</code> 가속도 곡선 경유. 비상정지(<code>stopImmediate</code>)만 즉시 정지.</li>
+  <li><b>냉각</b> — 75RPM 연속 2h+ 시 모터·전자부 ≈50°C(실측). 발열은 I²R 지배 → VREF 최소 유지 정책.</li>
+</ul>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="trouble">
+<h2><span class="n">14</span>트러블슈팅</h2>
+<table>
+<tr><th>증상</th><th>원인 / 조치</th></tr>
+<tr><td>화면 색이 네거티브(빨강→시안)</td><td>패널 INVON. <code>initTft()</code>의 <code>invertDisplay(false)</code> 유지 — 제거 금지.</td></tr>
+<tr><td>온도 항상 fault / <code>raw=0x7FFF</code> 미통신, <code>-242°C raw=0x0000</code></td><td>SPI 라운드트립은 정상인데 raw가 안 변하면 <b>아날로그단 사망</b>(현 보드 케이스). <code>TEMP_SENSOR_PRESENT=false</code>로 격리됨.</td></tr>
+<tr><td>FORCE 개방 fault(0x10/0x08)</td><td><code>RTD_WIRES</code> ↔ 보드 솔더점퍼 불일치. 임시로 2로 내려 격리 검증.</td></tr>
+<tr><td>모터 회전 중 화면보호기/업로드/삭제 시 리셋</td><td>「Cache disabled」 panic. 플래시op 게이팅으로 차단됨 — 모터 정지 후 업로드/삭제. (<a href="#crash">9장</a>)</td></tr>
+<tr><td>인코더 한쪽 방향만 동작 / 모터도 이상</td><td>PCNT 인코더 시도의 잔재. 현재는 인터럽트 인코더 — 이 증상이면 PCNT 코드 혼입 의심.</td></tr>
+<tr><td>벅 컨버터 사망 (5V 없음)</td><td>과부하가 아닌 발열/개체 불량. 입력정격 여유 부품(36V급)으로 교체. 모터(20V 직결)는 영향 없음.</td></tr>
+<tr><td>출력 80RPM 초과 시 탈조</td><td>토크–속도 한계(back-EMF), 코드 결함 아님. 권장 75RPM.</td></tr>
+<tr><td>시리얼 로그 안 보임</td><td>USB-CDC 재연결 타이밍. 보드 EN/RESET 1회.</td></tr>
+</table>
+</section>
+
+<hr>
+<p class="footer">europrocessor 펌웨어 설명서 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · 본 문서는 <code>README.md</code> + 소스 기준으로 생성됨</p>
+
+</main>
+</div>
+
+<script>
+// 스크롤 위치에 따라 사이드바 active 표시
+(function(){
+  const links = Array.from(document.querySelectorAll('#toc a'));
+  const map = links.map(a=>({a, sec:document.querySelector(a.getAttribute('href'))})).filter(x=>x.sec);
+  function onScroll(){
+    let cur = map[0];
+    const y = window.scrollY + 90;
+    for(const m of map){ if(m.sec.offsetTop <= y) cur = m; }
+    links.forEach(l=>l.classList.remove('active'));
+    if(cur) cur.a.classList.add('active');
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+})();
+</script>
+</body>
+</html>

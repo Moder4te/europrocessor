@@ -26,12 +26,12 @@
 #include <Adafruit_ST7789.h>
 #include <U8g2_for_Adafruit_GFX.h>
 #include <TJpg_Decoder.h>
-#include <AnimatedGIF.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <SPI.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
+#include <soc/gpio_reg.h>       // REG_READ(GPIO_IN_REG) — IRAM-safe GPIO 읽기 (인코더 ISR)
 #include <vector>
 
 // ──────────────────────────────────────────────────────────────
@@ -69,16 +69,19 @@ static void drawKText(int x, int y_top, const String& s, uint16_t fg, uint16_t b
 }
 
 // ──────────────────────────────────────────────────────────────
-// 로터리 인코더 — 인터럽트 디코딩
+// 로터리 인코더 — 인터럽트 디코딩 (IRAM-safe). ※PCNT는 FastAccelStepper와 충돌하여 불가
 // ──────────────────────────────────────────────────────────────
 static volatile int16_t g_encAccum = 0;
 static volatile uint8_t g_encState = 0;
-static const int8_t ENC_TABLE[16] = {
+// ★DRAM_ATTR★ — ISR이 캐시 비활성(플래시 op) 중에도 읽으므로 RAM에 상주
+static const DRAM_ATTR int8_t ENC_TABLE[16] = {
      0,-1, 1, 0,  1, 0, 0,-1, -1, 0, 0, 1,  0, 1,-1, 0
 };
+// IRAM-safe: digitalRead(플래시 함수) 대신 GPIO 입력 레지스터 직접 읽음
 static void IRAM_ATTR encISR() {
-    uint8_t a = digitalRead(Pin::ENC_A);
-    uint8_t b = digitalRead(Pin::ENC_B);
+    uint32_t in = REG_READ(GPIO_IN_REG);             // GPIO 0~31 입력 (ENC_A=17, ENC_B=16)
+    uint8_t a = (in >> Pin::ENC_A) & 1;
+    uint8_t b = (in >> Pin::ENC_B) & 1;
     g_encState = ((g_encState << 2) & 0x0F) | ((a << 1) | b);
     g_encAccum += ENC_TABLE[g_encState];
 }
@@ -204,13 +207,6 @@ static std::vector<StepInfo> g_cfSteps;
 // ──────────────────────────────────────────────────────────────
 // 화면보호기 디코더
 // ──────────────────────────────────────────────────────────────
-static AnimatedGIF g_gif;
-static File        g_gifFile;
-static bool        g_gifActive   = false;
-static uint8_t*    g_gifFrameBuf = nullptr;   // PSRAM 프레임버퍼 (COOKED: 디스포절/투명/최적화 처리)
-static uint8_t*    g_gifData     = nullptr;   // PSRAM에 통째로 올린 GIF 원본 (RAM open — 파일콜백 우회)
-static bool        g_gifCooked   = false;     // true=라이브러리가 변환한 RGB565 라인 직접 blit
-static int         g_gifLineCount = 0;        // [진단] playFrame당 gifDraw 호출 수
 // 화면보호기 애니메이션 상태 (임베드 Nyan 또는 업로드된 /saver.anim)
 static int         g_nyanFrame   = 0;          // 현재 재생 프레임 인덱스 (양쪽 공용)
 static uint32_t    g_nyanLastMs  = 0;
@@ -223,52 +219,6 @@ static bool tjpg_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* 
     if (y >= tft.height()) return false;
     tft.drawRGBBitmap(x, y, bitmap, w, h);
     return true;
-}
-static void* gifOpen(const char* fname, int32_t* pSize) {
-    g_gifFile = LittleFS.open(fname, "r");
-    if (!g_gifFile) return nullptr;
-    *pSize = g_gifFile.size();
-    return (void*)&g_gifFile;
-}
-static void gifClose(void*) { if (g_gifFile) g_gifFile.close(); }
-static int32_t gifRead(GIFFILE* gif, uint8_t* p, int32_t len) {
-    File* f = (File*)gif->fHandle;
-    int32_t left = gif->iSize - gif->iPos;
-    if (len > left) len = left - 1;   // ★AnimatedGIF 요구: EOF 직전 1바이트 남겨야 LZW 정상★
-    if (len <= 0) return 0;
-    int32_t n = f->read(p, len);
-    gif->iPos = f->position();
-    return n;
-}
-static int32_t gifSeek(GIFFILE* gif, int32_t pos) {
-    File* f = (File*)gif->fHandle;
-    f->seek(pos);
-    gif->iPos = pos;
-    return pos;
-}
-static void gifDraw(GIFDRAW* d) {
-    g_gifLineCount++;                  // [진단] 콜백 호출 카운트
-    int y = d->iY + d->y;
-    if (y < 0 || y >= 240) return;
-    int w = d->iWidth;
-    if (w > 320) w = 320;
-
-    if (g_gifCooked) {
-        // COOKED: 라이브러리가 디스포절·투명·인터레이스 처리 후 변환한 RGB565 라인
-        tft.drawRGBBitmap(d->iX, y, (uint16_t*)d->pPixels, w, 1);
-        return;
-    }
-    // RAW 폴백 (프레임버퍼 할당 실패 시) — 팔레트 직접 변환
-    uint16_t lineBuf[320];
-    uint8_t* s = d->pPixels;
-    uint16_t* pal = (uint16_t*)d->pPalette;
-    if (d->ucHasTransparency) {
-        uint8_t tcol = d->ucTransparent;
-        for (int x = 0; x < w; ++x) { uint8_t c = s[x]; lineBuf[x] = (c == tcol) ? COL_BG : pal[c]; }
-    } else {
-        for (int x = 0; x < w; ++x) lineBuf[x] = pal[s[x]];
-    }
-    tft.drawRGBBitmap(d->iX, y, lineBuf, w, 1);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1129,7 +1079,6 @@ static void displayTask(void*) {
     initTft();
     initInputs();
     loadSaverPrefs();
-    g_gif.begin(LITTLE_ENDIAN_PIXELS);
     touchInput();
     Serial.printf("[Display] init OK — saver %s, timeout %ds\n",
                   g_uiSet.saverOn ? "ON" : "OFF", g_uiSet.saverSec);
@@ -1156,8 +1105,12 @@ static void displayTask(void*) {
         if (anyInput) touchInput();
 
         if (g_ui.page == PAGE_SCREENSAVER) {
-            if (anyInput) { exitScreensaver(); changePage(PAGE_STATUS); continue; }
+            // 입력 또는 모터 기동 시 종료 (모터 중 loadAnim 플래시읽기 ↔ 인코더 인터럽트 크래시 회피)
+            if (anyInput || s_motion->state() != MotorState::IDLE) {
+                exitScreensaver(); changePage(PAGE_STATUS); continue;
+            }
         } else if (g_uiSet.saverOn && g_ui.page != PAGE_RUNCTL &&
+                   s_motion->state() == MotorState::IDLE &&     // 모터 운전 중엔 진입 안 함
                    (millis() - g_lastInputMs) >= (uint32_t)g_uiSet.saverSec * 1000UL) {
             changePage(PAGE_SCREENSAVER);
         }
@@ -1261,8 +1214,8 @@ static void displayTask(void*) {
             g_ui.lastLiveRefreshMs = now;
         }
 
-        // 화면보호기 애니메이션 진행 (정적 JPEG면 정지)
-        if (g_ui.page == PAGE_SCREENSAVER && !g_saverStatic) {
+        // 화면보호기 애니메이션 진행 (정적 JPEG면 정지). 모터 IDLE일 때만 (플래시op 충돌 회피)
+        if (g_ui.page == PAGE_SCREENSAVER && !g_saverStatic && s_motion->state() == MotorState::IDLE) {
             uint32_t t  = millis();
             int      fc = g_useAnim ? g_animFrames : NYAN_FRAMES;
             uint32_t dl = g_useAnim ? (uint32_t)g_animDelay : NYAN_DELAY_MS;

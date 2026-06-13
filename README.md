@@ -6,6 +6,8 @@ ESP32-S3 기반 **아날로그 필름 현상용 로터리 프로세서** 제어 
 
 `v4.0`에서 단일 `.ino` 모놀리식 구조를 **PlatformIO 기반 C++ OOP**로 전면 이관했습니다.
 
+> 📖 **전체 설명서(HTML):** [`docs/manual.html`](docs/manual.html) — 브라우저로 열면 사이드바 네비게이션이 있는 단일 파일 설명서. 하드웨어·전원·아키텍처·모듈 API·상태머신·크래시 분석·웹 API·트러블슈팅을 한 곳에 정리.
+
 ---
 
 ## 1. 하드웨어 사양
@@ -15,10 +17,10 @@ ESP32-S3 기반 **아날로그 필름 현상용 로터리 프로세서** 제어 
 | **MCU** | ESP32-S3 N16R8 (16MB Flash / 8MB OPI PSRAM) |
 | **모터** | NEMA17 + 3.71:1 유성기어, 1.8°/스텝 (200 step/rev) |
 | **드라이버** | TMC2209 (STEP/DIR/EN), StealthChop, 1/8 마이크로스텝 → 1600 step/rev |
-| **온도센서** | MAX31865 + PT100, 3선식, RREF 412Ω(실측) / RNOMINAL 100Ω |
-| **디스플레이** | ST7789 320×240 TFT (하드웨어 FSPI) |
+| **온도센서** | MAX31865 + PT100, 3선식, RREF 412Ω(실측) / RNOMINAL 100Ω — *현재 보드 불량으로 격리(`Cfg::TEMP_SENSOR_PRESENT=false`)* |
+| **디스플레이** | ST7789 320×240 TFT (하드웨어 FSPI) — 패널 색반전 보정 `invertDisplay(false)` |
 | **입력** | EC11 로터리 인코더(A/B/PUSH) + 확정 버튼(KO) |
-| **전원** | 메인 20V / 보조 12V (VMOT) |
+| **전원** | USB-PD 100W → CH224K 디코이로 20V 트리거 → 모터 직결 + 벅(20V→5V)→ESP (↓ 전원 아키텍처) |
 
 ### 속도 계산
 - 출력축 RPM → 모터 RPM × 3.71 → step/s
@@ -28,6 +30,32 @@ ESP32-S3 기반 **아날로그 필름 현상용 로터리 프로세서** 제어 
 ### 교반 시나리오
 정방향 `rotIntSec` 구동 → 감속 정지 → **REST(EN=HIGH, 코일 전류 차단 = 발열 억제)** 1초 →
 역방향 구동 → … 무한 반복. 레시피 모드에서는 각 단계가 `속도/지속시간/방향전환주기`를 가집니다.
+
+### 전원 아키텍처
+
+```
+USB-C PD 충전기 (100W)
+   │ USB-C
+   ▼
+[ CH224K ]  USB-PD 디코이/트리거 — CFG 저항으로 20V 선택
+   │ 20V
+   ├───────────────────────────────► TMC2209 VMOT (모터 전원, 직결)
+   │
+   ├─[ 470µF 캐패시터 ]  벌크 — 정/역 전환 트랜지언트 흡수
+   │
+   └──► [ 벅 컨버터 MP1584EN ]  20V → 5V 고정
+            │ 5V
+            ▼
+        ESP32-S3 DevKit ─ 온보드 LDO → 3.3V ─ 로직 / 센서 / 디스플레이 / 인코더
+```
+
+- **CH224K (USB-PD 디코이):** PD 소스와 협상해 **20V 고정** 출력. 전압 선택은 **CFG 핀 저항**으로 설정. 100W(20V/5A) 소스라 모터+로직 피크 전류에 여유 충분.
+- **470µF 캐패시터:** 20V 레일 벌크 캐패시터. 스테퍼 정/역 전환 시 역기전력·인덕티브 트랜지언트를 흡수. (계산상 모터발 레일 상승은 +1~2V 수준 — 캡이 충분히 억제)
+- **벅 컨버터 (20V→5V):** ESP+디스플레이 공급(부하 ~0.5A). 부하는 가볍지만 **20V→5V 강하비가 커 발열·입력마진(MP1584 최대 26V)이 빠듯** → 양품 + **입력정격 여유 부품(XL4015/LM2596HV 등 36V급) 권장.** (과부하가 아니라 개체 불량·발열로 사망 사례 있음)
+- **인러시/핫플러그:** PD가 5V→20V로 **부드럽게 램프업 + 전류제한** → 별도 NTC/소프트스타트/안티스파크 **불필요.** 단, 살아있는 20V에 커넥터 직삽은 지양.
+- **전원 스위치(선택):** 비상정지는 **모터 전원(20V→TMC) 차단용**으로 두는 게 안전(펌웨어 소프트 e-stop의 물리 백업). 꽂을 땐 ON 유지, 비상시에만 OFF.
+
+> 모터는 Core 1 + FastAccelStepper 하드웨어 ISR이라 디스플레이/웹 부하와 무관하게 타이밍 보장. 벅이 죽어도 모터 전원(20V 직결)은 영향 없음.
 
 ---
 
@@ -116,6 +144,9 @@ FastAccelStepper로 펄스를 생성하고 EN 핀은 수동 제어(REST 구간 �
 ### `TemperatureSensor` — 온도 측정
 Core 0 전용 태스크에서 MAX31865를 1Hz 폴링(소프트웨어 SPI). 모터 코어에 영향 없음.
 fault는 즉시 clear하지 않고 **연속 5회 누적 후에만** 시도 → 단선/접촉불량을 UI에서 끊김 없이 관찰.
+- **결선 모드**: `Cfg::RTD_WIRES`(2/3/4) — 보드 솔더점퍼와 일치 필수.
+- **진단**: 부팅 시 threshold 레지스터 SPI 라운드트립 자가진단(칩·통신 검증) + fault 비트 디코드 + raw RTD 값 출력.
+- **격리**: `Cfg::TEMP_SENSOR_PRESENT=false`면 init·폴링 태스크 미생성 → `temperature()=TEMP_UNREAD`, fault 없음(디스플레이 `--.-`). *현재 센서 보드 불량으로 격리됨 — 양품 장착 시 `true`로 복귀.*
 
 ### `WifiManager` — 네트워크
 AP+STA 동시 모드. AP `http://192.168.4.1`, mDNS `http://europrocessor.local`, AP DNS(captive).
@@ -128,8 +159,17 @@ ESPAsyncWebServer 기반. HTML은 `web_assets.h`에 PROGMEM 임베드.
 
 ### `DisplayUI` — 물리 UI
 ST7789 320×240 + EC11 인코더 + KO 버튼. U8g2로 한글 UTF-8 폰트 출력.
-캐시 기반 부분 렌더링으로 깜빡임 제거. 무입력 시 화면보호기(LittleFS의 GIF/JPEG, 텍스트 폴백).
+캐시 기반 부분 렌더링으로 깜빡임 제거. `initTft`에서 **`invertDisplay(false)`로 패널 색반전 보정**(이 패널은 INVON이 색을 네거티브로 반전).
 `ISaver`를 구현해 웹에서 화면보호기 설정을 읽고 씁니다.
+
+**화면보호기 — RGB565 애니메이션 (온디바이스 GIF 디코드 완전 제거):**
+- 온디바이스 GIF 디코드(AnimatedGIF)는 이 빌드에서 실패 → **라이브러리·코드 모두 제거**하고 **브라우저에서 사전 인코딩**한 RGB565 프레임을 기기는 디코드 없이 blit.
+- 업로드 시 **브라우저(`web_assets.h`)**가 GIF를 160×120 RGB565 `ANM1` 애니메이션으로 트랜스코드(최대 8프레임, 비율 유지 레터박스) 후 전송. 기기는 순수 blit만.
+- 우선순위: **`/saver.anim`(업로드) > `/saver.jpg`(정적) > 임베드 Nyan(기본)**.
+- `/saver.anim` 포맷: `"ANM1"` + W,H,frames,delay(u16 LE) + frames×W×H×2 RGB565(LE). 기기는 160×120 프레임을 PSRAM 로드 후 **2×→320×240**로 blit.
+- 임베드 Nyan은 `tools/gen_nyan.py`가 생성한 `nyan_frames.h`(flash 상수, RAM 0).
+
+**크래시 방지 — 플래시op ↔ 인코더 인터럽트 게이팅:** WiFi NVS·LittleFS 쓰기 등 플래시 연산이 캐시를 끄는 순간 인코더 인터럽트(모터 EMI로 유발)가 뜨면 *"Cache disabled but cached memory region accessed"* Core 1 panic이 난다. `encISR`은 `REG_READ`+`DRAM_ATTR` 테이블로 IRAM-safe화했지만 Arduino `attachInterrupt` 디스패처가 플래시를 건드려 잔존. **최종 차단 = 모터 비-IDLE이면 모든 플래시op 금지** — 화면보호기 진입/렌더 안 함, 업로드는 시작 거부 + 진행 중 모터 기동 시 중단·부분파일 삭제, 삭제는 409. (PCNT 인코더로의 전환은 FastAccelStepper가 PCNT를 점유해 불가)
 
 페이지: STATUS / 레시피경고 / 수동메뉴 / 속도·주기·화면보호기시간 편집 / 정보 / 화면보호기.
 
@@ -149,7 +189,7 @@ ST7789 320×240 + EC11 인코더 + KO 버튼. U8g2로 한글 UTF-8 폰트 출력
 | GET·POST | `/api/settings` | WiFi 설정 조회/저장(저장 시 재부팅) |
 | GET·POST | `/api/recipes/load`·`/save` | 레시피 JSON 불러오기/저장(LittleFS, 원자적 교체) |
 | GET·POST | `/api/saver/settings` | 화면보호기 활성/타임아웃 |
-| POST·DELETE | `/api/saver/image` | 화면보호기 이미지 업로드(매직바이트 판정)/삭제 |
+| POST·DELETE | `/api/saver/image` | 화면보호기 업로드(매직바이트로 JPEG/GIF/`ANM1` 판정 → `/saver.{jpg,gif,anim}`, 파일핸들 유지로 대용량 안정)/삭제. **모터 운전 중 차단**(업로드 거부·진행 중 중단, 삭제 409 — 플래시op 크래시 회피) |
 
 `/api/status`의 JSON 키와 HTML은 마이그레이션 전후로 동일하여 프론트엔드는 변경 없이 동작합니다.
 
@@ -178,16 +218,9 @@ pio device monitor      # 시리얼 모니터 (115200)
 
 ---
 
-## 7. 진단 도구 (`tools/`)
+## 7. 도구 (`tools/`)
 
-디스플레이/패널 하드웨어 진단용 독립 `.ino` 스케치 (빌드 대상 아님):
-
-| 스케치 | 용도 |
-|---|---|
-| `panel_minimal` | 패널/SPI/배선 격리 진단 — 핀 레벨 측정 + 색상 순환 |
-| `panel_id_probe` | ST7789 ID(RDDID=0x52) 응답 확인 (MISO 필요) |
-| `panel_kill_test` | 패널 사망 재현/진단 |
-| `display_test_standalone` | 디스플레이 단독 동작 테스트 |
+`gen_nyan.py` — GIF → RGB565 프레임 헤더(`src/nyan_frames.h`) 생성 (임베드 Nyan 화면보호기). LANCZOS로 160×120 리사이즈, 프레임/딜레이 자동 추출. Pillow 필요: `python -m pip install Pillow`.
 
 ---
 
