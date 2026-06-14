@@ -49,6 +49,8 @@ private:
     void disableCoils() { digitalWrite(Pin::EN, HIGH); }
     void haltStepper()  { if (_stepper) _stepper->forceStopAndNewPosition(_stepper->getCurrentPosition()); }
 
+    void applyRamp(float targetSteps);   // 목표속도 기반 S-커브 가감속 파라미터 적용
+
     static float rpmToSteps(float rpm) { return rpm * Cfg::GEAR_RATIO / 60.0f * Cfg::STEPS_PER_REV; }
     static float stepsToRpm(float sps) { return sps / Cfg::STEPS_PER_REV * 60.0f / Cfg::GEAR_RATIO; }
 

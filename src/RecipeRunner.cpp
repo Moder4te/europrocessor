@@ -54,9 +54,8 @@ void RecipeRunner::startStep(int idx) {
     _paused      = false;
     _motion.setCycle(true);                  // 단계 내 자동 방향전환 on
     _motion.setRotIntSec(s.rotIntSec);
-    _motion.setAcceleration(Cfg::ACCEL);
     Serial.printf("[Recipe] Step %d/%d: %s\n", idx + 1, total, s.name.c_str());
-    _motion.beginRun(s.speedRpm, true);
+    _motion.beginRun(s.speedRpm, true);   // 가감속은 beginRun이 S-커브로 적용
 }
 
 void RecipeRunner::update() {
@@ -108,8 +107,7 @@ void RecipeRunner::pauseToggle() {
     if (rpm <= 0) return;
     _stepStartMs = millis() - _pausedMs;
     _paused      = false;
-    _motion.setAcceleration(Cfg::ACCEL);
-    _motion.beginRun(rpm, true);
+    _motion.beginRun(rpm, true);   // 가감속은 beginRun이 S-커브로 적용
 }
 
 void RecipeRunner::confirm() {

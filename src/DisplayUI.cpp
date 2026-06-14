@@ -32,6 +32,7 @@
 #include <Preferences.h>
 #include <esp_task_wdt.h>
 #include <soc/gpio_reg.h>       // REG_READ(GPIO_IN_REG) — IRAM-safe GPIO 읽기 (인코더 ISR)
+#include <driver/gpio.h>        // gpio_install_isr_service(ESP_INTR_FLAG_IRAM) — IRAM-safe 인터럽트
 #include <vector>
 
 // ──────────────────────────────────────────────────────────────
@@ -77,8 +78,11 @@ static volatile uint8_t g_encState = 0;
 static const DRAM_ATTR int8_t ENC_TABLE[16] = {
      0,-1, 1, 0,  1, 0, 0,-1, -1, 0, 0, 1,  0, 1,-1, 0
 };
-// IRAM-safe: digitalRead(플래시 함수) 대신 GPIO 입력 레지스터 직접 읽음
-static void IRAM_ATTR encISR() {
+// IRAM-safe: digitalRead(플래시 함수) 대신 GPIO 입력 레지스터 직접 읽음.
+// ★시그니처 void(*)(void*) — IDF gpio_isr_handler_add 콜백 규약★
+// (Arduino attachInterrupt는 shared+non-IRAM 디스패처라 시스템 플래시op 캐시오프 중
+//  인코더 인터럽트가 뜨면 "Cache disabled" 패닉 → IDF IRAM ISR 서비스로 대체)
+static void IRAM_ATTR encISR(void*) {
     uint32_t in = REG_READ(GPIO_IN_REG);             // GPIO 0~31 입력 (ENC_A=17, ENC_B=16)
     uint8_t a = (in >> Pin::ENC_A) & 1;
     uint8_t b = (in >> Pin::ENC_B) & 1;
@@ -1065,8 +1069,17 @@ static void initInputs() {
     pinMode(Pin::ENC_B,    INPUT_PULLUP);
     pinMode(Pin::ENC_PUSH, INPUT_PULLUP);
     pinMode(Pin::KEY_OK,   INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(Pin::ENC_A), encISR, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(Pin::ENC_B), encISR, CHANGE);
+
+    // ★IRAM-safe 인코더 인터럽트★ — Arduino attachInterrupt(shared+non-IRAM) 대신
+    // IDF GPIO ISR 서비스를 ESP_INTR_FLAG_IRAM으로 설치. 시스템 플래시op(WiFi NVS 등)가
+    // 캐시를 끈 순간 인코더 인터럽트가 떠도 디스패처·핸들러가 전부 IRAM/DRAM이라 안전.
+    gpio_set_intr_type((gpio_num_t)Pin::ENC_A, GPIO_INTR_ANYEDGE);
+    gpio_set_intr_type((gpio_num_t)Pin::ENC_B, GPIO_INTR_ANYEDGE);
+    esp_err_t e = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE)   // 이미 설치됨(INVALID_STATE)은 정상
+        Serial.printf("[ENC] gpio_install_isr_service 실패: %d\n", (int)e);
+    gpio_isr_handler_add((gpio_num_t)Pin::ENC_A, encISR, nullptr);
+    gpio_isr_handler_add((gpio_num_t)Pin::ENC_B, encISR, nullptr);
 }
 
 // ──────────────────────────────────────────────────────────────

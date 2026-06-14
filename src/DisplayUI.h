@@ -4,7 +4,7 @@
 //  display_ui.ino 를 클래스 경계로 이관. 렌더 내부는 .cpp 파일스코프
 //  static 으로 유지(C 콜백이 tft 접근). 데이터는 주입된 deps에서 읽고,
 //  명령은 CommandQueue 로만 enqueue (Core 1이 처리).
-//  화면보호기 설정 제공을 위해 ISaver 구현.
+//  화면보호기 설정 제공을 위해 ISaver 구현.    
 // ================================================================
 #pragma once
 #include "ISaver.h"

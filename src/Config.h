@@ -54,10 +54,15 @@ namespace Cfg {
     // step/s 환산
     constexpr float MAX_SPEED = MAX_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV; // ≈7915
     constexpr float MIN_SPEED = MIN_OUTPUT_RPM * GEAR_RATIO / 60.0f * STEPS_PER_REV;
-    constexpr float ACCEL     = 6000.0f;         // step/s² (0→80RPM ≈1.3s)
+    // S-커브(소프트스타트) 가감속 — 설정 RPM 도달까지 RAMP_SEC초.
+    //   FastAccelStepper setLinearAcceleration: 가속도를 0→a로 선형 증가(저크 제한).
+    //   handover(선형가속→정가속 전환)를 목표속도의 SCURVE_HANDOVER 지점에 둠.
+    //   목표속도 v_t에 대해 per-run 계산:  a = v_t·(1+f)/T,  s_h = f²·v_t·T / (1.5·(1+f))
+    constexpr float RAMP_SEC        = 2.0f;      // 0 → 설정RPM 도달 시간(가속·감속 동일)
+    constexpr float SCURVE_HANDOVER = 0.5f;      // 저크제한 구간 비율(목표속도의 f까지 소프트스타트)
 
     // 타이밍
-    constexpr uint32_t REST_MS = 1000;           // 방향전환 휴지 (TMC2209 열관리)
+    constexpr uint32_t REST_MS = 2000;           // 방향전환 휴지 (관성 제어 + TMC2209 열관리)
 
     // 온도 센서 활성화 — false면 MAX31865 init·폴링 태스크 미생성.
     //   (보드 불량으로 임시 격리. temperature()=TEMP_UNREAD, fault()=0 → "--.-"표시)

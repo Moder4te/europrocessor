@@ -10,10 +10,25 @@ void MotionController::begin() {
     _stepper = _engine.stepperConnectToPin(Pin::STEP);
     if (_stepper) {
         _stepper->setDirectionPin(Pin::DIR);
-        _stepper->setAcceleration((uint32_t)Cfg::ACCEL);
         _stepper->setSpeedInHz((uint32_t)Cfg::MAX_SPEED);   // 기본 최고속
+        applyRamp(Cfg::MAX_SPEED);                          // 기본 S-커브 가감속
         // EN은 라이브러리 자동제어 미사용 — REST 구간 수동 차단 로직 유지
     }
+}
+
+// 목표속도(step/s)에 맞춰 S-커브 소프트스타트 가감속 파라미터 계산·적용.
+//   a   = v_t·(1+f)/T          (정가속 구간 가속도)
+//   s_h = f²·v_t·T / (1.5·(1+f))  (저크제한 선형가속 구간 스텝수)
+// → 0→목표속도 도달이 RAMP_SEC초, 초반은 가속도가 0에서 선형 증가(부드러운 출발).
+// setLinearAcceleration은 이후 모든 가속·감속(stopMove 포함)에 적용되어 정지도 대칭으로 부드럽다.
+void MotionController::applyRamp(float targetSteps) {
+    if (!_stepper || targetSteps < 1.0f) return;
+    const float f = Cfg::SCURVE_HANDOVER;
+    const float T = Cfg::RAMP_SEC;
+    float a  = targetSteps * (1.0f + f) / T;
+    float sh = f * f * targetSteps * T / (1.5f * (1.0f + f));
+    _stepper->setAcceleration((uint32_t)(a < 1.0f ? 1.0f : a));
+    _stepper->setLinearAcceleration((uint32_t)(sh < 0.0f ? 0.0f : sh));
 }
 
 void MotionController::beginRun(int rpm, bool fwd) {
@@ -25,6 +40,7 @@ void MotionController::beginRun(int rpm, bool fwd) {
 
     enableCoils();
     _stepper->setSpeedInHz((uint32_t)spd);
+    applyRamp(spd);                      // 설정 RPM 기준 S-커브 가감속(도달 RAMP_SEC초)
     _stepper->setCurrentPosition(0);     // 위치 카운터 오버플로 방지
     if (fwd) _stepper->runForward();
     else     _stepper->runBackward();

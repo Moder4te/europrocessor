@@ -143,7 +143,9 @@
 <p>출력축 RPM을 모터 step/s로 환산하는 식은 <code>MotionController</code>·<code>Config.h</code>에 동일하게 박혀 있다.</p>
 <pre><code><span class="c">// step/s = 출력RPM × 기어비 / 60 × (200 step × 8 마이크로스텝)</span>
 MAX_SPEED = 80 RPM × 3.71 / 60 × 1600  <span class="a">≈ 7,915 step/s</span>
-ACCEL     = 6000 step/s²               <span class="c">// 0→80RPM 약 1.3초</span></code></pre>
+<span class="c">// S-커브 가감속 — 설정 RPM(v_t)까지 RAMP_SEC=2초, handover f=0.5</span>
+a   = v_t·(1+f)/T = 0.75·v_t        <span class="c">// 정가속 구간 가속도</span>
+s_h = f²·v_t·T / (1.5·(1+f)) ≈ 0.22·v_t  <span class="c">// 저크제한(소프트스타트) 스텝수</span></code></pre>
 <ul>
   <li>출력 <b>80RPM = 모터 약 297RPM = 7,915 step/s</b> (<code>MAX_SPEED</code> 상한).</li>
   <li>80 초과 시 탈조는 코드 결함이 아니라 토크–속도 한계(back-EMF). <b>권장 운전 75RPM</b>.</li>
@@ -154,10 +156,10 @@ ACCEL     = 6000 step/s²               <span class="c">// 0→80RPM 약 1.3초<
 <div class="fsm">
   <span class="st run">정방향 rotIntSec 구동</span><span class="arr">→</span>
   <span class="st stop">감속 정지</span><span class="arr">→</span>
-  <span class="st rest">REST 1초 (EN=HIGH, 코일 차단)</span><span class="arr">→</span>
+  <span class="st rest">REST 2초 (EN=HIGH, 코일 차단)</span><span class="arr">→</span>
   <span class="st run">역방향 구동</span><span class="arr">→ …</span>
 </div>
-<p>무한 반복. REST 구간에 TMC2209 EN을 HIGH로 올려 코일 전류를 끊어 발열을 억제한다. 레시피 모드에서는 각 단계가 <b>속도 / 지속시간 / 방향전환주기</b>를 개별로 가진다.</p>
+<p>무한 반복. REST 구간(<code>REST_MS=2000</code>)에 TMC2209 EN을 HIGH로 올려 코일 전류를 끊어 관성을 안정시키고 발열을 억제한다. REST는 가속도 곡선 감속이 완전히 끝난 뒤 시작하므로 2초는 순수 휴식 구간이다. 레시피 모드에서는 각 단계가 <b>속도 / 지속시간 / 방향전환주기</b>를 개별로 가진다.</p>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -264,6 +266,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 
 <h3><code>MotionController</code> — 모터 상태머신</h3>
 <p>FastAccelStepper로 펄스를 생성하고 EN 핀은 수동 제어(REST 구간 코일 차단). <b>레시피를 모른다</b> — 단계 종료는 <code>requestStepStop()</code>으로 받고, 감속 완료는 <code>takeStepStopped()</code> 이벤트로 알린다. 모든 상태 변경은 Core 1에서만.</p>
+<p><b>S-커브 가감속.</b> <code>beginRun()</code>은 <code>applyRamp(목표속도)</code>를 호출해 <b>설정 RPM마다</b> 가속도와 저크제한 구간(<code>setLinearAcceleration</code>)을 다시 계산한다. 가속도가 0에서 선형으로 증가하는 소프트스타트라 출발/정지가 부드럽고, 어떤 설정 RPM이든 <b>도달 시간이 <code>RAMP_SEC</code>(2초)로 일정</b>하다. <code>setLinearAcceleration</code>은 <code>stopMove()</code> 감속에도 적용되어 정지도 대칭으로 부드럽다. (<a href="#config">11장 상수</a>)</p>
 <table>
 <tr><th>API</th><th>설명</th></tr>
 <tr><td><code>beginRun(rpm,fwd)</code></td><td>출력축 RPM·방향으로 구동 시작</td></tr>
@@ -318,7 +321,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>IDLE</code></td><td>정지</td></tr>
 <tr><td><code>RUN_FWD / RUN_REV</code></td><td>정 / 역방향 정속</td></tr>
 <tr><td><code>STOP_FWD / STOP_REV</code></td><td>해당 방향 감속 → REST</td></tr>
-<tr><td><code>REST</code></td><td>방향전환 휴지 — EN=HIGH (코일 전류 차단, 발열 억제), <code>REST_MS=1000</code></td></tr>
+<tr><td><code>REST</code></td><td>방향전환 휴지 — EN=HIGH (코일 전류 차단, 관성 안정 + 발열 억제), <code>REST_MS=2000</code></td></tr>
 <tr><td><code>STOP_RECIPE</code></td><td>레시피 단계 종료 감속 → <code>waitConfirm</code></td></tr>
 <tr><td><code>STOP_SAFE</code></td><td>안전 정지 감속 → IDLE (다음 사이클 없음)</td></tr>
 </table>
@@ -429,8 +432,9 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>Cfg::MAX_OUTPUT_RPM</code></td><td>80</td><td>탈조 한계 기반 상한</td></tr>
 <tr><td><code>Cfg::MIN_OUTPUT_RPM</code></td><td>5</td><td>실속 방지 하한</td></tr>
 <tr><td><code>Cfg::MAX_SPEED</code></td><td>≈7915 step/s</td><td>80RPM 환산 (파생)</td></tr>
-<tr><td><code>Cfg::ACCEL</code></td><td>6000 step/s²</td><td>0→80RPM 약 1.3초</td></tr>
-<tr><td><code>Cfg::REST_MS</code></td><td>1000</td><td>방향전환 휴지 (TMC 열관리)</td></tr>
+<tr><td><code>Cfg::RAMP_SEC</code></td><td>2.0</td><td>0→설정RPM 도달 시간(가속·감속). 목표속도 기준 per-run 계산</td></tr>
+<tr><td><code>Cfg::SCURVE_HANDOVER</code></td><td>0.5</td><td>S-커브 저크제한 구간 비율(목표속도의 f까지 소프트스타트)</td></tr>
+<tr><td><code>Cfg::REST_MS</code></td><td>2000</td><td>방향전환 휴지 (관성 안정 + TMC 열관리)</td></tr>
 <tr><td><code>Cfg::TEMP_SENSOR_PRESENT</code></td><td><b>false</b></td><td>온도센서 활성. false면 init·태스크 미생성 (현재 보드 불량 격리)</td></tr>
 <tr><td><code>Cfg::RREF</code> / <code>RNOMINAL</code></td><td>412 / 100 Ω</td><td>MAX31865 기준저항 / PT100 공칭</td></tr>
 <tr><td><code>Cfg::TEMP_FAULT_CLEAR_AFTER</code></td><td>5</td><td>연속 fault N회 후만 clear</td></tr>

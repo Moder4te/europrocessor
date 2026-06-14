@@ -66,8 +66,7 @@ static void manualStart(int rpm, bool fwd, bool cycle, int rotSec) {
     motion.setManualMode(true);
     motion.setCycle(cycle);
     motion.setRotIntSec(rotSec);
-    motion.setAcceleration(Cfg::ACCEL);
-    motion.beginRun(rpm, fwd);
+    motion.beginRun(rpm, fwd);   // 가감속은 beginRun이 설정RPM 기준 S-커브로 적용
     Serial.printf("[Manual] %dRPM %s cycle=%d rot=%ds\n", rpm, fwd ? "FWD" : "REV", cycle, rotSec);
 }
 static void dispatch(const Cmd& c) {
