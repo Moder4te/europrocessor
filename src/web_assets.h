@@ -367,6 +367,8 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <div class="info-row"><span>Uptime</span><span class="info-val" id="ab-up">—</span></div>
     <div class="info-row"><span>Memory (free / min / block)</span><span class="info-val" id="ab-heap">—</span></div>
     <div class="info-row"><span>Guard</span><span class="info-val" id="ab-guard">—</span></div>
+    <div class="info-row"><span>MAC</span><span class="info-val" id="ab-mac" style="user-select:all">—</span></div>
+    <div class="info-row"><span>Pin profile</span><span class="info-val" id="ab-pins">—</span></div>
     <div class="info-row"><span>MCU</span><span class="info-val">ESP32-S3</span></div>
     <div class="info-row"><span>Driver</span><span class="info-val">TMC2209 (Stepper)</span></div>
     <div class="info-row"><span>Temp</span><span class="info-val">MAX31865 + PT100</span></div>
@@ -664,6 +666,8 @@ function updateStatusUI(){
     document.getElementById('ab-up').textContent=Math.floor(u/3600)+'h '+String(Math.floor(u/60)%60).padStart(2,'0')+'m';
     document.getElementById('ab-heap').textContent=kb(sd.heapFree)+' / '+kb(sd.heapMin)+' / '+kb(sd.heapMax)+' KB';
     document.getElementById('ab-guard').textContent=sd.guard+' (reset '+sd.resetReason+')';
+    document.getElementById('ab-mac').textContent=sd.mac||'—';
+    document.getElementById('ab-pins').textContent=sd.pinProfile||'—';
   }
 }
 

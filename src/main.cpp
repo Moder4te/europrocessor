@@ -99,19 +99,19 @@ static void safePinInit() {
     // 잠깐 나가 EN 활성(코일 통전) 글리치 발생. (core 2.x digitalWrite = gpio_set_level 직행)
     auto out = [](uint8_t pin, uint8_t lvl){ digitalWrite(pin, lvl); pinMode(pin, OUTPUT); };
     // TMC2209 EN active-low: HIGH = 코일 차단
-    out(Pin::EN, HIGH);
+    out(pins().EN, HIGH);
     // panel 신호 핀 idle 고정 (floating noise → 컨트롤러 손상 예방)
-    out(Pin::TFT_CS,   HIGH);
-    out(Pin::TFT_DC,   HIGH);
-    out(Pin::TFT_RST,  HIGH);
-    out(Pin::TFT_BL,   LOW);
-    out(Pin::TFT_SCK,  LOW);
-    out(Pin::TFT_MOSI, LOW);
+    out(pins().TFT_CS,   HIGH);
+    out(pins().TFT_DC,   HIGH);
+    out(pins().TFT_RST,  HIGH);
+    out(pins().TFT_BL,   LOW);
+    out(pins().TFT_SCK,  LOW);
+    out(pins().TFT_MOSI, LOW);
     // 입력 핀 즉시 풀업 (floating noise 방지)
-    pinMode(Pin::ENC_A,    INPUT_PULLUP);
-    pinMode(Pin::ENC_B,    INPUT_PULLUP);
-    pinMode(Pin::ENC_PUSH, INPUT_PULLUP);
-    pinMode(Pin::KEY_OK,   INPUT_PULLUP);
+    pinMode(pins().ENC_A,    INPUT_PULLUP);
+    pinMode(pins().ENC_B,    INPUT_PULLUP);
+    pinMode(pins().ENC_PUSH, INPUT_PULLUP);
+    pinMode(pins().KEY_OK,   INPUT_PULLUP);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -183,6 +183,8 @@ void setup() {
     delay(300);
     Serial.println("\n================================");
     Serial.printf("[BOOT] Film Processor %s 시작\n", Cfg::FW_VERSION);
+    Serial.printf("[Pins] MAC %s → 핀 프로필: %s (STEP %u DIR %u EN %u)\n", boardMac(), pinProfileLabel(),
+                  pins().STEP, pins().DIR, pins().EN);
     Serial.printf("[BOOT] reset reason: %d, free heap: %u\n",
                   (int)esp_reset_reason(), (unsigned)ESP.getFreeHeap());
     Serial.flush();

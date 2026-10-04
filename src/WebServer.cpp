@@ -74,6 +74,8 @@ String WebServer::buildStatus() {
     doc["fw"]       = Cfg::FW_VERSION;
     doc["name"]     = _d.wifi->hostName();
     doc["boardId"]  = _d.wifi->settings().boardId;
+    doc["mac"]      = boardMac();
+    doc["pinProfile"] = pinProfileLabel();
     doc["upSec"]    = (uint32_t)(millis() / 1000);
     doc["heapFree"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     doc["heapMin"]  = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);

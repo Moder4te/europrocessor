@@ -1,51 +1,17 @@
 
 // ================================================================
-//  Config.h — 핀 배정 / 하드웨어 상수 (단일 진실원)
+//  Config.h — 하드웨어 상수 (단일 진실원)
 //  ----------------------------------------------------------------
-//  모든 핀·물리 상수를 namespace Pin / Cfg 로 모음.
-//  #define 매크로 → constexpr 로 전환 (타입 안전, 스코프 격리).
-//
-//  [ESP32-S3 GPIO 회피] strapping 0/3/45/46, UART0 43/44(TX/RX),
-//    USB 19/20, Flash 26~32, OPI PSRAM 35~37, RGB LED 48. 전부 회피.
-//
-//  [터미널 보드 실측 배치 — 두 변]
-//    · A변: 3v3 [g12 g11 g10 g9] g46 g3 g20 g19 [g8 g18 g17 g16 g15 g7] g6 g5 g4 en 3v3 gnd
-//           → TFT(12·11·10·9·8·18) + EC11(17·16·15) + KO(7) — 모두 인접
-//    · B변: v5in [g13 g14 g21 g47] g48 g45 g0 g35 g36 g37 g38 g39 [g40 g41 g42] rx tx g2 g1 gnd
-//           → MAX31865(13·14·21·47) + TMC2209(42·41·40)
+//  물리 상수는 namespace Cfg. 핀 배치는 보드마다 배선이 달라
+//  PinMap.h로 분리 — 부팅 시 칩 MAC으로 자동 선택 (pins().STEP 등).
 // ================================================================
 #pragma once
 #include <Arduino.h>
+#include "PinMap.h"   // 핀 배치는 보드별로 PinMap.h에서 (pins().STEP 등)
 
-namespace Pin {
-    // TMC2209 스테퍼 (출력 전용) — B변, 연속 3핀
-    constexpr uint8_t STEP = 42;
-    constexpr uint8_t DIR  = 41;
-    constexpr uint8_t EN   = 40;   // LOW=코일 활성, HIGH=전류 차단
-
-    // MAX31865 PT100 (소프트웨어 SPI) — B변, v5in 옆 연속 4핀
-    constexpr uint8_t MAX_CS   = 13;
-    constexpr uint8_t MAX_MOSI = 14;
-    constexpr uint8_t MAX_MISO = 21;
-    constexpr uint8_t MAX_CLK  = 47;
-
-    // ST7789 TFT (하드웨어 FSPI: SCK=12, MOSI=11 IO-MUX 직결) — A변
-    constexpr uint8_t TFT_SCK  = 12;
-    constexpr uint8_t TFT_MOSI = 11;
-    constexpr uint8_t TFT_CS   = 10;
-    constexpr uint8_t TFT_DC   = 9;
-    constexpr uint8_t TFT_RST  = 8;
-    constexpr uint8_t TFT_BL   = 18;
-
-    // EC11 인코더 + 확정 버튼 — A변, TFT 바로 옆 연속
-    constexpr uint8_t ENC_A    = 17;
-    constexpr uint8_t ENC_B    = 16;
-    constexpr uint8_t ENC_PUSH = 15;
-    constexpr uint8_t KEY_OK   = 7;
-}
 
 namespace Cfg {
-    constexpr const char* FW_VERSION = "v4.6.4";
+    constexpr const char* FW_VERSION = "v4.7";
 
     // 모터 — 마이크로스텝 8 (MS1=LOW, MS2=LOW) → 1600 step/rev
     constexpr int   STEPS_PER_REV = 1600;        // 200 × 8

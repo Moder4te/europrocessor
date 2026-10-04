@@ -45,8 +45,8 @@ public:
     bool       isRunning() const { return _stepper && _stepper->isRunning(); }
 
 private:
-    void enableCoils()  { digitalWrite(Pin::EN, LOW);  }
-    void disableCoils() { digitalWrite(Pin::EN, HIGH); }
+    void enableCoils()  { digitalWrite(pins().EN, LOW);  }
+    void disableCoils() { digitalWrite(pins().EN, HIGH); }
     void haltStepper()  { if (_stepper) _stepper->forceStopAndNewPosition(_stepper->getCurrentPosition()); }
 
     void applyRamp(float targetSteps);   // 목표속도 기반 S-커브 가감속 파라미터 적용

@@ -33,12 +33,12 @@ static void initWithPsramHeld(FastAccelStepperEngine& eng, FastAccelStepper*& st
 
 void MotionController::begin() {
     // EN 핀은 setup()에서 이미 OUTPUT+HIGH(차단)로 고정됨. 여기선 재확인.
-    pinMode(Pin::EN, OUTPUT);
+    pinMode(pins().EN, OUTPUT);
     disableCoils();
 
-    initWithPsramHeld(_engine, _stepper, Pin::STEP);
+    initWithPsramHeld(_engine, _stepper, pins().STEP);
     if (_stepper) {
-        _stepper->setDirectionPin(Pin::DIR);
+        _stepper->setDirectionPin(pins().DIR);
         _stepper->setSpeedInHz((uint32_t)Cfg::MAX_SPEED);   // 기본 최고속
         applyRamp(Cfg::MAX_SPEED);                          // 기본 S-커브 가감속
         // EN은 라이브러리 자동제어 미사용 — REST 구간 수동 차단 로직 유지

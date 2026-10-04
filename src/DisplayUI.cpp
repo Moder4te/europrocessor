@@ -56,7 +56,7 @@ static NoiseGuard*        s_guard  = nullptr;
 #define COL_DGRAY   0x2104
 
 // TFT + 한글 폰트 엔진 (파일스코프 — C 콜백 접근용)
-static Adafruit_ST7789       tft(Pin::TFT_CS, Pin::TFT_DC, Pin::TFT_RST);
+static Adafruit_ST7789       tft(pins().TFT_CS, pins().TFT_DC, pins().TFT_RST);
 static U8G2_FOR_ADAFRUIT_GFX u8g2;
 static const int K_FONT_ASCENT = 13;
 
@@ -87,10 +87,12 @@ static const DRAM_ATTR int8_t ENC_TABLE[16] = {
 static volatile uint32_t g_encEdges = 0;   // ISR 호출 수
 static volatile uint32_t g_encBad   = 0;   // A·B 동시변화 = 정상 회전으로 불가능한 전이
 static volatile int32_t  g_encNet   = 0;   // 윈도우 내 순이동 (손조작 판별)
+// ISR용 핀 번호 사본 — pins()는 플래시 함수라 ISR(캐시 OFF 중 실행 가능)에서 호출 금지. initInputs()에서 설정.
+static DRAM_ATTR uint8_t s_encPinA = 0, s_encPinB = 0;
 // ※ 무변화(cur==prev)는 세지 않음 — EC11 접점 바운스로 손조작에서도 흔함
 static void IRAM_ATTR encISR(void*) {
-    uint32_t in = REG_READ(GPIO_IN_REG);             // GPIO 0~31 입력 (ENC_A=17, ENC_B=16)
-    uint8_t cur  = (uint8_t)((((in >> Pin::ENC_A) & 1) << 1) | ((in >> Pin::ENC_B) & 1));
+    uint32_t in = REG_READ(GPIO_IN_REG);             // GPIO 0~31 입력 (PinMap이 ENC_A/B < 32 보장)
+    uint8_t cur  = (uint8_t)((((in >> s_encPinA) & 1) << 1) | ((in >> s_encPinB) & 1));
     uint8_t prev = g_encState & 0x03;
     g_encEdges++;
     if ((cur ^ prev) == 0x03) g_encBad++;
@@ -114,8 +116,8 @@ static int8_t popEncoderSteps() {
 // 버튼 디바운싱
 // ──────────────────────────────────────────────────────────────
 struct Btn { uint8_t pin, state, lastRead; uint32_t lastEdgeMs; bool pressedEvt; uint16_t glitches; };
-static Btn btnPush = {Pin::ENC_PUSH, HIGH, HIGH, 0, false, 0};
-static Btn btnOk   = {Pin::KEY_OK,   HIGH, HIGH, 0, false, 0};
+static Btn btnPush = {pins().ENC_PUSH, HIGH, HIGH, 0, false, 0};
+static Btn btnOk   = {pins().KEY_OK,   HIGH, HIGH, 0, false, 0};
 static const uint16_t BTN_DEBOUNCE_MS = 25;
 
 static void btnPoll(Btn& b) {
@@ -146,8 +148,8 @@ static uint32_t s_noiseWinMs   = 0;
 static uint32_t s_peakEdges = 0, s_peakBad = 0, s_peakBtn = 0;   // 보정용 피크 (10초 로그)
 
 static void encIntrEnable(bool on) {
-    if (on) { gpio_intr_enable ((gpio_num_t)Pin::ENC_A); gpio_intr_enable ((gpio_num_t)Pin::ENC_B); }
-    else    { gpio_intr_disable((gpio_num_t)Pin::ENC_A); gpio_intr_disable((gpio_num_t)Pin::ENC_B); }
+    if (on) { gpio_intr_enable ((gpio_num_t)pins().ENC_A); gpio_intr_enable ((gpio_num_t)pins().ENC_B); }
+    else    { gpio_intr_disable((gpio_num_t)pins().ENC_A); gpio_intr_disable((gpio_num_t)pins().ENC_B); }
 }
 static void resetInputNoise() {
     noInterrupts(); g_encAccum = 0; g_encEdges = 0; g_encBad = 0; g_encNet = 0; interrupts();
@@ -1016,6 +1018,8 @@ static void renderInfoFull() {
     snprintf(buf, sizeof(buf), "Firmware    : %s (C++/OOP)", Cfg::FW_VERSION); line(buf);
     snprintf(buf, sizeof(buf), "Guard       : %s (reset %d)", s_guard->status(), s_guard->resetReason()); line(buf);
     line("MCU         : ESP32-S3");
+    snprintf(buf, sizeof(buf), "MAC         : %s", boardMac()); line(buf);
+    snprintf(buf, sizeof(buf), "Pin profile : %s", pinProfileLabel()); line(buf);
     line("Motor       : NEMA17 + TMC2209 (1/8 microstep)");
     line("Temp        : MAX31865 + PT100 (RREF 412 ohm)");
     snprintf(buf, sizeof(buf), "AP IP       : %s", WiFi.softAPIP().toString().c_str()); line(buf);
@@ -1129,12 +1133,12 @@ static void onStatusPush() {
 // ──────────────────────────────────────────────────────────────
 static void initTft() {
     Serial.println("[TFT] step1: BL off");
-    digitalWrite(Pin::TFT_BL, LOW);
-    digitalWrite(Pin::TFT_RST, HIGH); delay(50);
-    digitalWrite(Pin::TFT_RST, LOW);  delay(100);
-    digitalWrite(Pin::TFT_RST, HIGH); delay(300);
+    digitalWrite(pins().TFT_BL, LOW);
+    digitalWrite(pins().TFT_RST, HIGH); delay(50);
+    digitalWrite(pins().TFT_RST, LOW);  delay(100);
+    digitalWrite(pins().TFT_RST, HIGH); delay(300);
     Serial.println("[TFT] step2: RST pulse done");
-    SPI.begin(Pin::TFT_SCK, -1, Pin::TFT_MOSI);
+    SPI.begin(pins().TFT_SCK, -1, pins().TFT_MOSI);
     Serial.println("[TFT] step3: SPI.begin");
     tft.init(240, 320);
     Serial.println("[TFT] step4: tft.init OK");
@@ -1143,7 +1147,7 @@ static void initTft() {
     tft.invertDisplay(false);   // 이 패널은 INVON이 반전이라 OFF로 정상화 (네거티브 수정)
     tft.fillScreen(COL_BG);
     Serial.println("[TFT] step5: panel cleared (26MHz, rot=3)");
-    digitalWrite(Pin::TFT_BL, HIGH);
+    digitalWrite(pins().TFT_BL, HIGH);
     Serial.println("[TFT] step6: BL on — ready");
     u8g2.begin(tft);
     u8g2.setFontDirection(0);
@@ -1151,21 +1155,23 @@ static void initTft() {
     TJpgDec.setCallback(tjpg_output);
 }
 static void initInputs() {
-    pinMode(Pin::ENC_A,    INPUT_PULLUP);
-    pinMode(Pin::ENC_B,    INPUT_PULLUP);
-    pinMode(Pin::ENC_PUSH, INPUT_PULLUP);
-    pinMode(Pin::KEY_OK,   INPUT_PULLUP);
+    pinMode(pins().ENC_A,    INPUT_PULLUP);
+    pinMode(pins().ENC_B,    INPUT_PULLUP);
+    pinMode(pins().ENC_PUSH, INPUT_PULLUP);
+    pinMode(pins().KEY_OK,   INPUT_PULLUP);
 
     // ★IRAM-safe 인코더 인터럽트★ — Arduino attachInterrupt(shared+non-IRAM) 대신
     // IDF GPIO ISR 서비스를 ESP_INTR_FLAG_IRAM으로 설치. 시스템 플래시op(WiFi NVS 등)가
     // 캐시를 끈 순간 인코더 인터럽트가 떠도 디스패처·핸들러가 전부 IRAM/DRAM이라 안전.
-    gpio_set_intr_type((gpio_num_t)Pin::ENC_A, GPIO_INTR_ANYEDGE);
-    gpio_set_intr_type((gpio_num_t)Pin::ENC_B, GPIO_INTR_ANYEDGE);
+    s_encPinA = pins().ENC_A;
+    s_encPinB = pins().ENC_B;
+    gpio_set_intr_type((gpio_num_t)pins().ENC_A, GPIO_INTR_ANYEDGE);
+    gpio_set_intr_type((gpio_num_t)pins().ENC_B, GPIO_INTR_ANYEDGE);
     esp_err_t e = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE)   // 이미 설치됨(INVALID_STATE)은 정상
         Serial.printf("[ENC] gpio_install_isr_service 실패: %d\n", (int)e);
-    gpio_isr_handler_add((gpio_num_t)Pin::ENC_A, encISR, nullptr);
-    gpio_isr_handler_add((gpio_num_t)Pin::ENC_B, encISR, nullptr);
+    gpio_isr_handler_add((gpio_num_t)pins().ENC_A, encISR, nullptr);
+    gpio_isr_handler_add((gpio_num_t)pins().ENC_B, encISR, nullptr);
 }
 
 // ──────────────────────────────────────────────────────────────

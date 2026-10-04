@@ -2,7 +2,7 @@
 #include <esp_task_wdt.h>
 
 TemperatureSensor::TemperatureSensor()
-    : _sensor(Pin::MAX_CS, Pin::MAX_MOSI, Pin::MAX_MISO, Pin::MAX_CLK) {}
+    : _sensor(pins().MAX_CS, pins().MAX_MOSI, pins().MAX_MISO, pins().MAX_CLK) {}
 
 void TemperatureSensor::begin() {
     if (!Cfg::TEMP_SENSOR_PRESENT) {
@@ -13,8 +13,8 @@ void TemperatureSensor::begin() {
     }
     _mux = xSemaphoreCreateMutex();
     // CS 핀 idle 고정 — 부팅 직후 부유 상태 차단
-    pinMode(Pin::MAX_CS, OUTPUT);
-    digitalWrite(Pin::MAX_CS, HIGH);
+    pinMode(pins().MAX_CS, OUTPUT);
+    digitalWrite(pins().MAX_CS, HIGH);
     // 결선 모드는 Cfg::RTD_WIRES로 (보드 솔더점퍼와 일치). 2/4선은 칩 config가
     // 동일(D4=0), 3선만 D4=1. enum: 2WIRE=0, 3WIRE=1, 4WIRE=0.
     const max31865_numwires_t wm = (Cfg::RTD_WIRES == 3) ? MAX31865_3WIRE

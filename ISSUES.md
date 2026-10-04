@@ -101,6 +101,7 @@
 | **v4.6.2**: 인코더 노이즈 판정 완화 — 무변화 전이(바운스) 제외, 한 방향 순이동 ≥ 2디텐트면 손조작으로 보고 면제, ISR 폭주 상한 600→2000/500ms | `DisplayUI.cpp`, `Config.h` |
 | **v4.6.3 🔴 reset 4(패닉) 수정**: 모터 운전 중 TFT "Run recipe" 진입 시 크래시. UART 백트레이스 → `pcnt_intr_service`가 PSRAM에 할당된 `p_pcnt_obj`(0x3d800908)를 플래시 읽기(캐시 OFF) 중 접근. IDF 4.4 pcnt 드라이버가 `MALLOC_CAP_DEFAULT`로 할당하는 버그. FAS 초기화 동안 PSRAM을 점유해 내부 RAM 할당 강제 | `MotionController.cpp` |
 | **v4.6.4 운전 중 플래시/재부팅 전면 차단**: 보드가 `motorBusy()`(회전·감속·레시피 진행/일시정지/확인대기)면 설정 저장(재부팅)·레시피 저장·화면보호기 업로드/삭제·OTA 모두 409. TFT 화면보호기 설정·OTA 확정 NVS 쓰기는 정지 시까지 지연. 레시피 저장: 동시 저장 409, 64KB 상한, 쓰기 실패 감지, 커밋 전 JSON 검증. 웹: 저장 대기/재시도/실패 표시, 대기 중 페이지 이탈 경고, 설정 저장 결과 확인 | `WebServer.*`, `DisplayUI.cpp`, `main.cpp`, `web_assets.h` |
+| **v4.7 보드별 핀 배치**: `PinMap.h` 한 파일에 배치표. 부팅 시 칩 MAC으로 자동 선택(미등록 → `DEFAULT_PINS`) → 같은 .bin을 어느 보드에 OTA해도 안전. 금지 GPIO·중복·인코더 핀(<32)은 `static_assert`로 빌드 차단. MAC/프로필은 웹 디바이스 정보·TFT System info·시리얼 `[Pins]`에 표시 | `PinMap.*`, `Config.h` 외 |
 | **NoiseGuard 신규**: 인코더/버튼 노이즈 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋 3회 → 모터 잠금 | `NoiseGuard.*`, `DisplayUI.cpp` |
 
 **실기 검증 시 확인할 것**
