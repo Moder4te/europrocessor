@@ -27,3 +27,9 @@ build/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# 보드 플래시/레시피 백업 (개인 데이터, 대용량)
+backups/
+
+# OTA용 펌웨어 바이너리 (빌드 산출물 복사본)
+firmware/

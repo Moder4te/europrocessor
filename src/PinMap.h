@@ -36,21 +36,27 @@ struct PinMap {
 constexpr PinMap DEFAULT_PINS = { 42, 41, 40,  13,  14,  21,  47,   12,  11,  10, 9,  8, 18,    17,   16,  15,  7 };
 
 struct BoardPins {
-    const char* mac;     // "AA:BB:CC:DD:EE:FF" (대문자)
-    const char* label;   // 로그/웹 표시용
+    const char* mac;         // "AA:BB:CC:DD:EE:FF" (대문자)
+    const char* label;       // 로그/웹 표시용
     PinMap      pins;
+    bool        hasDisplay;  // false = TFT·인코더·버튼 없음 → 해당 핀 미사용(구동 안 함), 화면 태스크 미기동
+    uint8_t     rtdWires;    // MAX31865 PT100 결선: 0 = 센서 없음/격리(미초기화), 2/3/4 = 결선 (★보드 솔더점퍼와 일치★)
 };
 
 // ★보드별 배치 — 배선이 기본과 다른 보드만 추가★
+//   무디스플레이 보드는 앞 7개(STEP DIR EN | CS MOSI MISO CLK)만 쓰고 나머지는 생략(0) + hasDisplay=false
 constexpr BoardPins BOARDS[] = {
-    // 예시) { "A0:F2:62:E5:D9:B0", "바디1", { 42, 41, 40, 13, 14, 21, 47, 12, 11, 10, 9, 8, 18, 17, 16, 15, 7 } },
-    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS },
+    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS, true, 0 },   // MAX31865 보드 불량 → 격리
+    // 구버전 무디스플레이 바디 (v2.2~v3.1.3 rotary_processor_nodisplay.ino 핀 정의)
+    { "D0:CF:13:59:14:78", "바디2 (무디스플레이)", { 5, 6, 7,  2, 38, 39, 40 }, false, 2 },   // 임시 2선 모드: 3선 결선(A)이지만 보드 3선 점퍼 구조 확인 전까지 (리드선만큼 ~1°C 높게 읽힘)
 };
 
 // 부팅 시 선택된 배치 (MAC 매칭, 없으면 DEFAULT_PINS). 정적 초기화 중 호출해도 안전.
 const PinMap& pins();
 const char*   pinProfileLabel();
 const char*   boardMac();          // "AA:BB:CC:DD:EE:FF"
+bool          boardHasDisplay();   // 미등록 보드는 true (기본 배선 = 디스플레이 버전)
+uint8_t       boardRtdWires();     // 0 = 온도센서 미사용. 미등록 보드는 0 (안전)
 
 // ── 컴파일 타임 검증 (C++11 constexpr — 재귀) ─────────────────────
 namespace pinmap_check {
@@ -66,21 +72,24 @@ namespace pinmap_check {
         return p == 0 || p == 3 || p == 45 || p == 46 || p == 19 || p == 20 ||
                (p >= 26 && p <= 37) || p == 43 || p == 44 || p >= 48;
     }
-    constexpr bool anyForbidden(const PinMap& m, int i = 0) {
-        return i >= N ? false : (forbidden(at(m, i)) || anyForbidden(m, i + 1));
+    constexpr int N_CORE = 7;   // 무디스플레이: STEP DIR EN + MAX31865 4핀만 검사
+    constexpr bool anyForbidden(const PinMap& m, int n, int i = 0) {
+        return i >= n ? false : (forbidden(at(m, i)) || anyForbidden(m, n, i + 1));
     }
-    constexpr bool dupFrom(const PinMap& m, int i, int j) {
-        return j >= N ? false : (at(m, i) == at(m, j) || dupFrom(m, i, j + 1));
+    constexpr bool dupFrom(const PinMap& m, int n, int i, int j) {
+        return j >= n ? false : (at(m, i) == at(m, j) || dupFrom(m, n, i, j + 1));
     }
-    constexpr bool anyDup(const PinMap& m, int i = 0) {
-        return i >= N ? false : (dupFrom(m, i, i + 1) || anyDup(m, i + 1));
+    constexpr bool anyDup(const PinMap& m, int n, int i = 0) {
+        return i >= n ? false : (dupFrom(m, n, i, i + 1) || anyDup(m, n, i + 1));
     }
-    constexpr bool valid(const PinMap& m) {
-        return !anyForbidden(m) && !anyDup(m) && m.ENC_A < 32 && m.ENC_B < 32;
+    constexpr bool valid(const PinMap& m, bool hasDisplay = true) {
+        return hasDisplay ? (!anyForbidden(m, N) && !anyDup(m, N) && m.ENC_A < 32 && m.ENC_B < 32)
+                          : (!anyForbidden(m, N_CORE) && !anyDup(m, N_CORE));
     }
     constexpr int COUNT = sizeof(BOARDS) / sizeof(BOARDS[0]);
+    constexpr bool wiresOk(uint8_t w) { return w == 0 || w == 2 || w == 3 || w == 4; }
     constexpr bool allValid(int i = 0) {
-        return i >= COUNT ? true : (valid(BOARDS[i].pins) && allValid(i + 1));
+        return i >= COUNT ? true : (valid(BOARDS[i].pins, BOARDS[i].hasDisplay) && wiresOk(BOARDS[i].rtdWires) && allValid(i + 1));
     }
 }
 static_assert(pinmap_check::valid(DEFAULT_PINS),

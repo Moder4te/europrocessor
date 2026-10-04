@@ -5,6 +5,10 @@ ESP32-S3 기반 **아날로그 필름 현상용 로터리 프로세서** 제어 
 웹 UI와 물리 디스플레이(TFT + 로터리 인코더)로 레시피/수동 운전을 제어합니다.
 
 `v4.0`에서 단일 `.ino` 모놀리식 구조를 **PlatformIO 기반 C++ OOP**로 전면 이관했습니다.
+`v4.4~v4.8`: 안정성 전수 개선(PCNT 패닉 수정·노이즈 가드·운전 중 플래시 차단), 웹 OTA, 멀티 보드 제어,
+보드별 핀 배치(칩 MAC 자동 선택), 무디스플레이·N8R2 지원, WiFi 검색, 온도 보정.
+
+> 🧾 **현존 이슈·변경 이력·실측 결과:** [`ISSUES.md`](ISSUES.md)
 
 > 📖 **전체 설명서(HTML):** [`docs/manual.html`](docs/manual.html) — 브라우저로 열면 사이드바 네비게이션이 있는 단일 파일 설명서. 하드웨어·전원·아키텍처·모듈 API·상태머신·크래시 분석·웹 API·트러블슈팅을 한 곳에 정리.
 
@@ -72,9 +76,17 @@ MAX31865  CS=GPIO13   MOSI=GPIO14  MISO=GPIO21  CLK=GPIO47  (소프트웨어 SPI
 TMC2209   EN=GPIO40   DIR=GPIO41   STEP=GPIO42  (EN: LOW=코일활성, HIGH=차단, 연속 3핀)
 ```
 
-핀 상수는 모두 `src/Config.h`의 `namespace Pin`에 `constexpr`로 정의됩니다.
-ESP32-S3 strapping(0/3/45/46), UART0(43/44), USB(19/20), Flash(26~32),
-OPI PSRAM(35~37), RGB LED(48) 핀은 모두 회피했습니다.
+위는 기본 배치(`DEFAULT_PINS`, 바디1)입니다. **보드마다 배선이 달라 핀은 `src/PinMap.h` 한 파일에서 관리**합니다.
+
+- 부팅 시 **칩 MAC으로 `BOARDS[]`에서 배치를 자동 선택**, 미등록 보드는 `DEFAULT_PINS`. 같은 `.bin`을 어느 보드에 OTA해도 안전.
+- 항목: 핀 17개 + `hasDisplay`(false면 TFT/인코더 핀을 전혀 구동하지 않고 화면 태스크 미기동) + `rtdWires`(0=온도센서 격리, 2/3/4=결선).
+- **금지 GPIO**(strapping 0/3/45/46, USB 19/20, Flash·PSRAM 26~37, UART0 43/44, RGB LED 48)·**중복 핀**·**인코더 핀 ≥32**는 `static_assert`로 빌드 단계에서 차단.
+- 새 보드 등록: 웹 설정 → 디바이스 정보의 MAC 확인 → `BOARDS[]`에 한 줄 추가 → 빌드·OTA.
+
+| 보드 | MAC | 사양 | 배치 |
+|---|---|---|---|
+| 바디1 | `A0:F2:62:E5:D9:B0` | N16R8, 디스플레이 | 기본 배치, 온도센서 격리(불량 보드) |
+| 바디2 | `D0:CF:13:59:14:78` | N8R2, 무디스플레이 | STEP 5 · DIR 6 · EN 7 · MAX CS 2 / MOSI 38 / MISO 39 / CLK 40, PT100 2선 모드 |
 
 ---
 
@@ -102,7 +114,9 @@ OPI PSRAM(35~37), RGB LED(48) 핀은 모두 회피했습니다.
 
 ```
 main.cpp              App 코디네이터 — 객체 소유·배선, setup/loop, 상태 전이
-Config.h              핀/물리 상수 (Pin:: / Cfg::, constexpr)
+Config.h              물리 상수 (Cfg::, constexpr) · FW_VERSION · 노이즈/온도 임계값
+PinMap.*              보드별 핀 배치 + hasDisplay + rtdWires (칩 MAC 자동 선택, static_assert 검증)
+NoiseGuard.*          입력 노이즈 버스트 감시 → 패널 입력 차단/모터 정지, 연속 비정상 리셋 시 모터 잠금
 Types.h               공유 도메인 타입 (MotorState, StepInfo, CmdType, Cmd)
 CommandQueue.h        크로스코어 명령 큐 + 비상정지 플래그
 ISaver.h              화면보호기 설정 인터페이스 (+ 무디스플레이용 NullSaver)
@@ -112,6 +126,7 @@ TemperatureSensor.*    MAX31865 — Core 0 태스크, 뮤텍스 보호
 WifiManager.*          AP+STA 동시 모드, DNS/mDNS, Preferences
 WebServer.*            ESPAsyncWebServer 라우트 + 상태 JSON + 스테이징
 web_assets.h          웹 UI HTML/CSS/JS (PROGMEM 임베드)
+web_multi.h           멀티 보드 제어 페이지 (/multi) — 브라우저가 각 보드 API를 직접 호출
 DisplayUI.*            ST7789 + 인코더 + 버튼 UI (Core 0 태스크, ISaver 구현)
 ```
 
@@ -145,13 +160,16 @@ FastAccelStepper로 펄스를 생성하고 EN 핀은 수동 제어(REST 구간 �
 ### `TemperatureSensor` — 온도 측정
 Core 0 전용 태스크에서 MAX31865를 1Hz 폴링(소프트웨어 SPI). 모터 코어에 영향 없음.
 fault는 즉시 clear하지 않고 **연속 5회 누적 후에만** 시도 → 단선/접촉불량을 UI에서 끊김 없이 관찰.
-- **결선 모드**: `Cfg::RTD_WIRES`(2/3/4) — 보드 솔더점퍼와 일치 필수.
+- **결선 모드**: 보드별 `PinMap.h` `rtdWires`(2/3/4) — 보드 솔더점퍼와 일치 필수.
 - **진단**: 부팅 시 threshold 레지스터 SPI 라운드트립 자가진단(칩·통신 검증) + fault 비트 디코드 + raw RTD 값 출력.
-- **격리**: `Cfg::TEMP_SENSOR_PRESENT=false`면 init·폴링 태스크 미생성 → `temperature()=TEMP_UNREAD`, fault 없음(디스플레이 `--.-`). *현재 센서 보드 불량으로 격리됨 — 양품 장착 시 `true`로 복귀.*
+- **격리**: `rtdWires=0`이면 init·폴링 태스크 미생성 → `temperature()=TEMP_UNREAD`, fault 없음(화면 `--.-`). 바디1은 센서 보드 불량으로 격리.
+- **오류 판정**: SPI 미통신(0x01), 유효범위(-20~100°C) 밖(0x02)을 칩 fault 비트와 함께 처리. 1초에 2°C 넘는 점프는 스파이크로 버림.
+- **보정**: 측정저항에 `R = gain·R_meas + offset` 선형 보정(NVS `tcal`, 보드별). 웹 설정 "온도 보정"에서 1점/2점(예: 0°C 얼음물 + 38°C).
 
 ### `WifiManager` — 네트워크
-AP+STA 동시 모드. AP `http://192.168.4.1`, mDNS `http://europrocessor.local`, AP DNS(captive).
-STA 자동 재연결 이벤트 처리. 설정은 Preferences `wifi` 네임스페이스에 영구 저장.
+홈 WiFi(STA) 미설정이면 AP 단독, 설정 시 AP+STA. 설정은 Preferences `wifi`에 영구 저장.
+- **보드 번호(1~9)**: 이름 `europrocessor`(1) / `europrocessorN`(.local), AP 대역 `192.168.(3+N).1` — 1번=4.1, 2번=5.1, 3번=6.1. 슬레이브가 다른 보드 AP에 STA로 붙어도 대역 충돌 없음. AP 최대 접속 10.
+- **STA 재연결 백오프** 30s→최대 5분(즉시 재시도 시 채널 스캔으로 AP 통신이 끊기던 문제 방지), WiFi 절전 OFF.
 
 ### `WebServer` — HTTP
 ESPAsyncWebServer 기반. HTML은 `web_assets.h`에 PROGMEM 임베드.
@@ -190,19 +208,39 @@ ST7789 320×240 + EC11 인코더 + KO 버튼. U8g2로 한글 UTF-8 폰트 출력
 | GET·POST | `/api/settings` | WiFi 설정 조회/저장(저장 시 재부팅) |
 | GET·POST | `/api/recipes/load`·`/save` | 레시피 JSON 불러오기/저장(LittleFS, 원자적 교체) |
 | GET·POST | `/api/saver/settings` | 화면보호기 활성/타임아웃 |
+| POST | `/api/skip` · `/api/safestop` | 단계 건너뛰기 / 감속 정지 (둘 다 감속 후 동작) |
+| POST | `/api/goto` | `{"step":N}` 지정 단계로 이동 (진행도 바 클릭 → 확인창) |
+| GET | `/api/recipe` | 실행 중 레시피의 단계 목록(이름·시간·RPM) — 모든 클라이언트가 같은 진행도 바 |
+| GET | `/multi` | 멀티 보드 제어 페이지 (상태·정지·일시정지·다음단계·레시피 동시 시작) |
+| POST | `/api/ota` | 펌웨어 업로드(`X-OTA` 헤더 필수). 사양(플래시 용량) 불일치·운전 중·동시 업로드 거부. 크래시 루프 시 이전 펌웨어로 자동 롤백 |
+| GET | `/api/wifi/scan` | 주변 WiFi 비동기 검색(`?refresh=1` 강제). 같은 SSID 병합·신호순 |
+| POST | `/api/temp/cal` | 온도 보정 `{"gain","offset"}` 또는 `{"reset":true}` |
 | POST·DELETE | `/api/saver/image` | 화면보호기 업로드(매직바이트로 JPEG/GIF/`ANM1` 판정 → `/saver.{jpg,gif,anim}`, 파일핸들 유지로 대용량 안정)/삭제. **모터 운전 중 차단**(업로드 거부·진행 중 중단, 삭제 409 — 플래시op 크래시 회피) |
 
-`/api/status`의 JSON 키와 HTML은 마이그레이션 전후로 동일하여 프론트엔드는 변경 없이 동작합니다.
+`/api/status` 추가 키: `fw`·`variant`·`name`·`boardId`·`mac`·`pinProfile`·`upSec`·`heapFree/Min/Max`·`guard`·`resetReason`·`rssi`·`apClients`·`tempFaultCode`·`rtdWires`·`rtdOhm`·`calGain/calOffset`.
+
+**운전 중 차단**: 모터 회전·감속 중이거나 레시피 진행(일시정지·확인대기 포함) 중이면 플래시 쓰기·재부팅이 따르는 요청(설정 저장, 레시피 저장, 화면보호기, OTA, 온도 보정)은 모두 **409**. 웹은 레시피 편집을 "저장 대기"로 미뤘다가 정지 후 자동 저장.
 
 ---
 
 ## 6. 빌드 & 플래시 (PlatformIO)
 
+**칩 사양이 2종이라 빌드 환경도 2개**입니다. 플래시 용량·PSRAM 종류는 빌드 타임 설정이라 바이너리가 다릅니다.
+
+| 환경 | 칩 | 파티션 | 대상 |
+|---|---|---|---|
+| `esp32-s3-devkitc-1` | N16R8 (16MB / 8MB Octal PSRAM) | `partitions.csv` | 바디1 |
+| `n8r2` | N8R2 (8MB / 2MB Quad PSRAM) | `partitions_8MB.csv` | 바디2 |
+
 ```bash
-pio run                 # 빌드
-pio run -t upload       # 펌웨어 업로드
-pio device monitor      # 시리얼 모니터 (115200)
+pio run -e esp32-s3-devkitc-1 -e n8r2               # 두 사양 모두 빌드
+pio run -e n8r2 -t upload --upload-port COMx        # USB 업로드 (최초 1회 또는 파티션 변경 시)
+pio device monitor --dtr 0 --rts 0                  # 시리얼 모니터 — ★DTR/RTS 끄기★
 ```
+
+- **OTA(권장)**: 웹 설정 → "펌웨어 업데이트"에 `.pio/build/<환경>/firmware.bin` 업로드. 사양이 다른 `.bin`은 보드가 `wrong board variant`로 거부.
+- **⚠ USB 시리얼 포트를 닫으면 보드가 리셋**됩니다(USB-Serial-JTAG). 운전 중 모니터를 닫거나 케이블을 뽑지 마세요. 크래시 로그는 UART0(GPIO43/44) TTL로 받는 게 안전합니다.
+- `firmware/`, `backups/`(보드 플래시·레시피 백업)는 git 제외.
 
 - `data/` 폴더가 없으므로 `uploadfs`는 불필요합니다(레시피·화면보호기는 런타임 생성).
 - 시리얼 로그가 안 보이면 보드 **EN/RESET**을 한 번 누르세요(USB-CDC 재연결 타이밍).
@@ -210,12 +248,13 @@ pio device monitor      # 시리얼 모니터 (115200)
 ### 빌드 플래그 (`platformio.ini`)
 | 플래그 | 의미 |
 |---|---|
-| `UI_DISPLAY_PRESENT=1` | 디스플레이 결선 여부. `0`이면 `displayTask` 미생성(무디스플레이 변종) |
+| `UI_DISPLAY_PRESENT=1` | 화면 코드 포함 여부. 보드별 화면 유무는 `PinMap.h` `hasDisplay`로 런타임 결정 |
+| `FW_VARIANT` | 칩 사양 태그(`N16R8`/`N8R2`) — 웹·로그 표시 |
 | `BOARD_HAS_PSRAM` + `memory_type=qio_opi` | N16R8 OPI PSRAM 활성 |
 | `ARDUINO_USB_CDC_ON_BOOT=1` | 네이티브 USB 포트로 Serial 출력 |
 | `CORE_DEBUG_LEVEL=0` | 코어 로그 억제(디버깅 시 3) |
 
-`partitions.csv` — 3MB APP ×2 (OTA) + 9.9MB LittleFS (16MB Flash 기준).
+`partitions.csv` — 3MB APP ×2 (OTA) + 9.9MB LittleFS (16MB). `partitions_8MB.csv` — 3MB APP ×2 + 1.9MB LittleFS (8MB).
 
 ---
 
@@ -231,6 +270,11 @@ pio device monitor      # 시리얼 모니터 (115200)
 - **부팅 즉시 panel 신호 핀 idle 고정** — 부팅 직후 floating noise가 패널 컨트롤러를 비정상 state로 몰아 ESD/latch-up 손상 누적 방지. 권장 HW 풀업: TFT CS·RST→3.3V 10K.
 - **디스플레이 배선 주의** — 신호선을 5V(VBUS) 근처로 라우팅하지 말 것. 5V가 신호핀에 닿으면 내부 ESD 다이오드를 통해 VCC 레일로 역주입되어 컨트롤러/백라이트가 손상될 수 있음(실손상 사례 있음).
 - **냉각** — 75RPM 연속 2h+ 시 모터·전자부 ≈50°C(실측). 발열은 I²R 지배 → VREF 최소 유지 정책.
+- **PCNT 패닉 회피** — IDF 4.4 pcnt 드라이버가 객체를 PSRAM에 잡아, 모터 운전 중 플래시 접근 시 `Cache disabled` 패닉(reset 4). FAS 초기화 동안 PSRAM을 점유해 내부 RAM 할당 강제(`MotionController.cpp`).
+- **운전 중 플래시 쓰기·재부팅 금지** — 플래시 소거 동안 모터 펄스 큐 보충이 멈춰 덜컹일 수 있음. 웹 API 409 + NVS 쓰기 지연.
+- **노이즈 가드** — 인코더/버튼 노이즈 버스트 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋 3회 → 모터 잠금(전원 재투입 해제).
+- **감속 정지** — 일시정지·단계 이동·건너뛰기는 S-커브 감속 후 동작. 비상정지만 즉시.
+- **전원** — 20V 라인에 퓨즈(1.5~2A), 드라이버 VM 근처 100~470µF, 5V 레귤레이터 출력에 쇼트키 다이오드(USB 5V 역류 방지) 권장. 전원 켠 채 모터 커넥터 탈착 금지.
 
 ---
 

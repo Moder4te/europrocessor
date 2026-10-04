@@ -21,6 +21,15 @@ public:
     float   temperature() const;
     uint8_t fault() const;
 
+    // ── 보정 (2점/1점) — 측정 저항에 선형 보정: R_cal = gain·R_meas + offset(Ω) ──
+    //   RREF 오차·PT100 공차·2선식 리드선 저항을 함께 흡수. NVS "tcal"에 저장(보드별).
+    float rtdOhm() const;                              // 보정 전 측정 저항 (Ω), 미측정 0
+    float calGain()   const { return _calGain; }
+    float calOffset() const { return _calOffset; }
+    bool  setCalibration(float gain, float offsetOhm); // 범위 밖이면 false. NVS 저장(운전 중 호출 금지)
+    static float celsiusToOhm(float t);                // PT100 Callendar–Van Dusen
+    static float ohmToCelsius(float r);
+
 private:
     static void taskTrampoline(void* self);
     void        taskLoop();       // Core 0 루프 (1Hz)
@@ -29,6 +38,9 @@ private:
     SemaphoreHandle_t _mux = nullptr;
 
     float    _temp       = Cfg::TEMP_UNREAD;
+    float    _ohm        = 0.0f;                  // 보정 전 측정 저항
+    volatile float _calGain   = 1.0f;
+    volatile float _calOffset = 0.0f;
     uint8_t  _fault      = 0;
     uint16_t _faultCount = 0;     // 연속 fault 카운터
     float    _lastGood   = Cfg::TEMP_UNREAD;   // 스파이크 판정 기준 (tempTask 전용)

@@ -11,6 +11,10 @@
 
 // send()는 응답을 저장만 하고 전송은 핸들러 반환 후 — 핸들러 안에서 restart 하면 응답 유실.
 // 1초 뒤 별도 태스크로 재시작.
+static uint8_t flashSizeCode(uint32_t sz) {
+    return sz >= (16u << 20) ? 4 : sz >= (8u << 20) ? 3 : sz >= (4u << 20) ? 2 : sz >= (2u << 20) ? 1 : 0;
+}
+
 static void scheduleReboot() {
     xTaskCreate([](void*){ vTaskDelay(pdMS_TO_TICKS(1000)); ESP.restart(); },
                 "reboot", 2048, nullptr, 1, nullptr);
@@ -62,6 +66,11 @@ String WebServer::buildStatus() {
     uint8_t f = _d.temp->fault();
     doc["temperature"] = (f == 0) ? t : Cfg::TEMP_UNREAD;
     doc["tempFault"]   = (f != 0);
+    doc["tempFaultCode"] = f;   // MAX31865 fault 비트 (0x80 상한,0x40 하한,0x20 REFIN-과전압,0x10 REFIN-개방,0x08 RTDIN-개방,0x04 과·저전압,0x02 범위밖,0x01 SPI미통신)
+    doc["rtdWires"]    = boardRtdWires();
+    doc["rtdOhm"]      = _d.temp->rtdOhm();      // 보정 전 측정 저항 — 웹 보정 계산용
+    doc["calGain"]     = _d.temp->calGain();
+    doc["calOffset"]   = _d.temp->calOffset();
 
     bool staOK = WifiManager::staConnected();
     doc["staConn"] = staOK;
@@ -76,6 +85,9 @@ String WebServer::buildStatus() {
     doc["boardId"]  = _d.wifi->settings().boardId;
     doc["mac"]      = boardMac();
     doc["pinProfile"] = pinProfileLabel();
+    doc["variant"]  = FW_VARIANT;
+    doc["rssi"]     = staOK ? WiFi.RSSI() : 0;          // 집 WiFi 수신 세기 (dBm) — 링크 품질 진단
+    doc["apClients"] = WiFi.softAPgetStationNum();
     doc["upSec"]    = (uint32_t)(millis() / 1000);
     doc["heapFree"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     doc["heapMin"]  = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
@@ -214,6 +226,60 @@ void WebServer::setupRoutes() {
     );
 
     // ── WiFi 설정 ──
+    // ── 온도 보정 저장: {"gain":g,"offset":Ω} 또는 {"reset":true} ──
+    //   계산은 웹이 함(기준온도 → PT100 저항, 측정저항 rtdOhm과 선형 맞춤). NVS 쓰기라 운전 중 거부.
+    _server.on("/api/temp/cal", HTTP_POST,
+        [](AsyncWebServerRequest*){}, nullptr,
+        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t){
+            if (motorBusy()) { req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}"); return; }
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"ok\":false}"); return; }
+            const bool reset = doc["reset"] | false;
+            const float g = reset ? 1.0f : (doc["gain"]   | 1.0f);
+            const float o = reset ? 0.0f : (doc["offset"] | 0.0f);
+            if (!_d.temp->setCalibration(g, o)) {
+                req->send(400, "application/json", "{\"ok\":false,\"error\":\"out of range\"}"); return;
+            }
+            req->send(200, "application/json", "{\"ok\":true}");
+        }
+    );
+
+    // ── 주변 WiFi 검색 (비동기) ──
+    //   GET → 결과 있으면 {"scanning":false,"nets":[…]}, 진행 중이면 {"scanning":true} (클라가 1초마다 재요청)
+    //   15초 내 결과는 캐시 재사용(?refresh=1로 강제). 검색 중 2~4초 AP 클라 통신 지연 가능(채널 순회).
+    //   AP 단독 모드면 scanNetworks가 STA를 자동으로 켬 — STA SSID 없으면 재연결 시도 안 하므로 무해.
+    _server.on("/api/wifi/scan", HTTP_GET, [this](AsyncWebServerRequest* req){
+        int16_t n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING) { req->send(200, "application/json", "{\"scanning\":true}"); return; }
+        // 내가 시작한 검색 결과만 사용 — STA 접속 시 내부 검색도 완료 비트를 세워 n=0을 돌려줌(빈 목록 오인)
+        if (n >= 0 && _scanPending) {   // 완료 → 정리해서 캐시
+            _scanPending = false;
+            JsonDocument doc;
+            JsonArray arr = doc["nets"].to<JsonArray>();
+            for (int i = 0; i < n; ++i) {
+                String ssid = WiFi.SSID(i);
+                if (!ssid.length()) continue;                       // 숨김 SSID 제외
+                bool dup = false;                                   // 같은 SSID(메시/다중 AP)는 가장 센 것만
+                for (JsonObject o : arr) if (o["ssid"] == ssid) {
+                    if (WiFi.RSSI(i) > (int)o["rssi"]) { o["rssi"] = WiFi.RSSI(i); o["ch"] = WiFi.channel(i); }
+                    dup = true; break;
+                }
+                if (dup) continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["ssid"] = ssid; o["rssi"] = WiFi.RSSI(i); o["ch"] = WiFi.channel(i);
+                o["open"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+            }
+            WiFi.scanDelete();
+            _scanJson = ""; serializeJson(doc, _scanJson);
+            _scanMs = millis();
+        }
+        const bool fresh = _scanJson.length() && millis() - _scanMs < 15000 && !req->hasParam("refresh");
+        if (fresh) { req->send(200, "application/json", String("{\"scanning\":false,") + _scanJson.substring(1)); return; }
+        WiFi.scanDelete();         // 이전(내부) 결과 정리
+        _scanPending = WiFi.scanNetworks(true) == WIFI_SCAN_RUNNING;   // 비동기 시작
+        req->send(200, "application/json", "{\"scanning\":true}");
+    });
+
     _server.on("/api/settings", HTTP_GET, [this](AsyncWebServerRequest* req){
         const WifiSettings& s = _d.wifi->settings();
         JsonDocument doc;
@@ -479,6 +545,10 @@ void WebServer::setupRoutes() {
                 if (!req->hasHeader("X-OTA"))             { _otaErr = "forbidden";     return; }
                 if (motorBusy())
                                                           { _otaErr = "motor running"; return; }
+                // 칩 사양 불일치 이미지 거부 (N16R8용 .bin을 N8R2 바디에 올리는 사고 등)
+                //   이미지 헤더 byte3 상위 4비트 = 플래시 용량 코드 (2=4MB, 3=8MB, 4=16MB)
+                if (len < 4 || data[0] != 0xE9 || (data[3] >> 4) != flashSizeCode(ESP.getFlashChipSize()))
+                                                          { _otaErr = "wrong board variant"; return; }
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { _otaErr = Update.errorString(); return; }
                 Serial.printf("[OTA] 시작: %s\n", filename.c_str());
             }

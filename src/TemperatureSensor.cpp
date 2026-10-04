@@ -1,28 +1,68 @@
 #include "TemperatureSensor.h"
 #include <esp_task_wdt.h>
+#include <Preferences.h>
+
+// PT100 (IEC 60751): R(t) = R0·[1 + A·t + B·t² + C·(t−100)·t³], C는 t<0에서만
+float TemperatureSensor::celsiusToOhm(float t) {
+    const float A = 3.9083e-3f, B = -5.775e-7f, C = -4.183e-12f;
+    float r = 1.0f + A * t + B * t * t;
+    if (t < 0) r += C * (t - 100.0f) * t * t * t;
+    return Cfg::RNOMINAL * r;
+}
+float TemperatureSensor::ohmToCelsius(float r) {   // 뉴턴법 역산 (4회면 0.001°C 이내)
+    float t = (r / Cfg::RNOMINAL - 1.0f) / 3.9083e-3f;
+    for (int i = 0; i < 4; ++i) {
+        float d = Cfg::RNOMINAL * (3.9083e-3f + 2.0f * -5.775e-7f * t);
+        t -= (celsiusToOhm(t) - r) / d;
+    }
+    return t;
+}
+
+bool TemperatureSensor::setCalibration(float gain, float offsetOhm) {
+    // 넓게 허용 — 보드 점퍼·센서 사양 차이로 기울기 수 % 오차도 실측됨(바디2: gain 1.08). 물리적으로 터무니없는 값만 거부
+    if (!(gain >= 0.85f && gain <= 1.15f) || !(offsetOhm >= -20.0f && offsetOhm <= 20.0f)) return false;
+    _calGain = gain; _calOffset = offsetOhm;
+    Preferences p;
+    if (p.begin("tcal", false)) { p.putFloat("gain", gain); p.putFloat("off", offsetOhm); p.end(); }
+    _lastGood = Cfg::TEMP_UNREAD;   // 보정 직후 값 점프를 스파이크로 오인하지 않게
+    Serial.printf("[MAX31865] 보정 저장: gain=%.5f offset=%.3fΩ\n", gain, offsetOhm);
+    return true;
+}
+
+float TemperatureSensor::rtdOhm() const {
+    float r = 0;
+    if (_mux && xSemaphoreTake(_mux, pdMS_TO_TICKS(5)) == pdTRUE) { r = _ohm; xSemaphoreGive(_mux); }
+    return r;
+}
 
 TemperatureSensor::TemperatureSensor()
     : _sensor(pins().MAX_CS, pins().MAX_MOSI, pins().MAX_MISO, pins().MAX_CLK) {}
 
 void TemperatureSensor::begin() {
-    if (!Cfg::TEMP_SENSOR_PRESENT) {
-        // 임시 격리 — 센서 init·태스크 생략. _mux=null이라 getter가 기본값
-        // (TEMP_UNREAD / 0) 반환 → 디스플레이 "--.-", fault 스팸 없음.
-        Serial.println("[MAX31865] 비활성 (TEMP_SENSOR_PRESENT=false) — 온도 기능 격리");
+    const uint8_t wires = boardRtdWires();   // 보드별 (PinMap.h)
+    if (wires == 0) {
+        // 센서 없음/격리 — init·태스크 생략. _mux=null이라 getter가 기본값
+        // (TEMP_UNREAD / 0) 반환 → 화면 "--.-", fault 스팸 없음. MAX31865 핀도 건드리지 않음.
+        Serial.println("[MAX31865] 비활성 (이 보드 rtdWires=0) — 온도 기능 격리");
         return;
     }
     _mux = xSemaphoreCreateMutex();
+    {   // 보정값 로드 (없으면 gain 1, offset 0)
+        Preferences p;
+        if (p.begin("tcal", true)) { _calGain = p.getFloat("gain", 1.0f); _calOffset = p.getFloat("off", 0.0f); p.end(); }
+        Serial.printf("[MAX31865] 보정: gain=%.5f offset=%.3fΩ\n", (double)_calGain, (double)_calOffset);
+    }
     // CS 핀 idle 고정 — 부팅 직후 부유 상태 차단
     pinMode(pins().MAX_CS, OUTPUT);
     digitalWrite(pins().MAX_CS, HIGH);
-    // 결선 모드는 Cfg::RTD_WIRES로 (보드 솔더점퍼와 일치). 2/4선은 칩 config가
+    // 결선 모드는 보드별 rtdWires (보드 솔더점퍼와 일치). 2/4선은 칩 config가
     // 동일(D4=0), 3선만 D4=1. enum: 2WIRE=0, 3WIRE=1, 4WIRE=0.
-    const max31865_numwires_t wm = (Cfg::RTD_WIRES == 3) ? MAX31865_3WIRE
-                                 : (Cfg::RTD_WIRES == 4) ? MAX31865_4WIRE
-                                                         : MAX31865_2WIRE;
+    const max31865_numwires_t wm = (wires == 3) ? MAX31865_3WIRE
+                                 : (wires == 4) ? MAX31865_4WIRE
+                                                : MAX31865_2WIRE;
     _sensor.begin(wm);
     Serial.printf("[MAX31865] 초기화 완료 (%dWIRE, RREF=%.1f)\n",
-                  (int)Cfg::RTD_WIRES, (double)Cfg::RREF);
+                  (int)wires, (double)Cfg::RREF);
 
     // ── 진단 B: SPI 라운드트립 자가진단 (결과는 tempTask가 반복 출력) ──
     //   threshold 레지스터(읽기·쓰기 가능, RTD 아날로그단과 무관)에 알려진 값을
@@ -104,12 +144,15 @@ void TemperatureSensor::taskLoop() {
         //   raw 0x0000(SDO LOW 고정) / 0x7FFF(SDO HIGH·floating) → 미통신(배선/전원)
         //   raw 중간값 + fault → 실제 RTD 단선/단락 또는 임계값 초과
         uint16_t raw = _sensor.readRTD();
-        float    t   = _sensor.calculateTemperature(raw, Cfg::RNOMINAL, Cfg::RREF);
+        const float ohm = raw * Cfg::RREF / 32768.0f;                 // 보정 전 저항
+        float    t   = ohmToCelsius(_calGain * ohm + _calOffset);         // 보정 후 온도
         uint8_t  f   = _sensor.readFault();
         const bool noComm = (raw == 0x0000 || raw == 0x7FFF);
         // 미통신이면 칩 fault 레지스터도 못 믿음 → D0(칩 미사용 비트)을 SW 플래그로 fault 처리.
         //   (기존: fault=0이면 raw 0x7FFF → ~988°C가 정상값으로 표시됨)
         if (noComm) f |= 0x01;
+        // 물리적으로 불가능한 값 = 결선/점퍼 이상 (예: 합선 → -241°C). D1(칩 미사용 비트)을 SW 플래그로 fault 처리.
+        if (!f && (t < Cfg::TEMP_MIN_VALID_C || t > Cfg::TEMP_MAX_VALID_C)) f |= 0x02;
 
         // 스파이크 제거 — 직전 정상값 대비 TEMP_MAX_STEP_C 초과 점프는 노이즈로 보고 버림(직전값 유지).
         //   연속 TEMP_SPIKE_ACCEPT_AFTER회 이어지면 실제 변화로 수용.
@@ -132,6 +175,7 @@ void TemperatureSensor::taskLoop() {
         uint16_t cnt = 0;
         if (_mux && xSemaphoreTake(_mux, pdMS_TO_TICKS(10)) == pdTRUE) {
             _temp  = t;
+            _ohm   = ohm;
             _fault = f;
             if (f) {
                 if (++_faultCount >= Cfg::TEMP_FAULT_CLEAR_AFTER) {
@@ -157,6 +201,7 @@ void TemperatureSensor::taskLoop() {
             if (f & 0x08) add("RTDIN-개방(단일선/-측) ");
             if (f & 0x04) add("과·저전압(완전개방?) ");
             if (f & 0x01) add("SPI미통신 ");
+            if (f & 0x02) add("범위밖(합선/개방?) ");
             Serial.printf("[온도 오류] fault=0x%02X [%s] raw=0x%04X (연속 %u회)%s\n",
                           f, fb, raw, cnt, noComm ? " ← SPI미통신" : "");
         } else if (!spike) {

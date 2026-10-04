@@ -129,7 +129,7 @@ function render(){
     }
     const active=d.recipeRun||d.recipePause||d.waitConfirm;
     return `<div class="card">
-      <div class="row"><span class="dot ${dotc}"></span><span class="title">${esc(d.name)}</span><span class="muted">#${d.boardId} · ${esc(h)} · ${esc(d.fw)}</span>${guard}${h!==location.host?`<button class="x" onclick="rmBoard('${esc(h)}')">×</button>`:''}</div>
+      <div class="row"><span class="dot ${dotc}"></span><span class="title">${esc(d.name)}</span><span class="muted">#${d.boardId} · ${esc(h)} · ${esc(d.fw)}${d.staConn&&d.rssi?' · '+d.rssi+'dBm':''}</span>${guard}${h!==location.host?`<button class="x" onclick="rmBoard('${esc(h)}')">×</button>`:''}</div>
       <div class="row" style="margin-top:10px"><span class="rpm">${d.motorRpm}</span><span class="muted">RPM</span><span class="chip ${dir[0]}">${dir[1]}</span><span class="chip">${mode}</span><span class="muted" style="margin-left:auto">${temp}</span></div>
       ${rec}
       <div class="row" style="margin-top:10px">

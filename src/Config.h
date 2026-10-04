@@ -10,8 +10,12 @@
 #include "PinMap.h"   // 핀 배치는 보드별로 PinMap.h에서 (pins().STEP 등)
 
 
+#ifndef FW_VARIANT
+#define FW_VARIANT "unknown"   // platformio.ini build_flags에서 지정 (N16R8 / N8R2)
+#endif
+
 namespace Cfg {
-    constexpr const char* FW_VERSION = "v4.7";
+    constexpr const char* FW_VERSION = "v4.8.1";
 
     // 모터 — 마이크로스텝 8 (MS1=LOW, MS2=LOW) → 1600 step/rev
     constexpr int   STEPS_PER_REV = 1600;        // 200 × 8
@@ -32,22 +36,13 @@ namespace Cfg {
     // 타이밍
     constexpr uint32_t REST_MS = 2000;           // 방향전환 휴지 (관성 제어 + TMC2209 열관리)
 
-    // 온도 센서 활성화 — false면 MAX31865 init·폴링 태스크 미생성.
-    //   (보드 불량으로 임시 격리. temperature()=TEMP_UNREAD, fault()=0 → "--.-"표시)
-    //   양품 보드 장착 시 true로 복귀.
-    constexpr bool TEMP_SENSOR_PRESENT = false;
+    // 온도센서 유무·결선(2/3/4선)은 보드별 → PinMap.h BOARDS[].rtdWires
 
     // MAX31865 (RREF 실측 하드코딩)
     constexpr float RREF     = 412.0f;
     constexpr float RNOMINAL = 100.0f;
     constexpr uint16_t TEMP_FAULT_CLEAR_AFTER = 5;  // 연속 fault N회 후만 clear
 
-    // RTD 결선 모드 — ★보드 솔더점퍼와 반드시 일치★ (2 / 3 / 4)
-    //   3선식: 리드선 저항 보상 → 컬러(C-41/E-6) 온도정밀도에 유리.
-    //   ★보드 솔더점퍼를 3선식으로 설정 + 페어→F+/RTD+, 단일선→RTD-,
-    //     F-↔RTD-는 3선 점퍼가 내부 브리지★. 점퍼/펌웨어 불일치 시 FORCE-
-    //     개방 fault(0x10/0x08) → 그땐 임시로 2로 내려 격리 검증 가능.
-    constexpr uint8_t RTD_WIRES = 2;
 
     // 센티넬 온도값
     constexpr float TEMP_UNREAD = -999.0f;
@@ -56,6 +51,9 @@ namespace Cfg {
     //   연속 N회 초과면 실제 변화(센서 이동 등)로 보고 새 기준 수용.
     constexpr float   TEMP_MAX_STEP_C         = 2.0f;
     constexpr uint8_t TEMP_SPIKE_ACCEPT_AFTER = 3;
+    // 유효 온도 범위 — 현상 수조(실온~40°C대) 기준 넉넉히. 밖이면 센서 오류(fault 0x02)
+    constexpr float   TEMP_MIN_VALID_C = -20.0f;
+    constexpr float   TEMP_MAX_VALID_C = 100.0f;
 
     // ── 노이즈 가드 (NoiseGuard) ──
     //   ★실측 보정용 노브★ — 10초마다 [Noise] peak 로그 보고 조정. 정상 조작 피크의 ~3배로.

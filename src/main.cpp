@@ -29,10 +29,9 @@
 #include "RecipeStage.h"
 #include "NoiseGuard.h"
 
+#include "ISaver.h"
 #if UI_DISPLAY_PRESENT
   #include "DisplayUI.h"
-#else
-  #include "ISaver.h"
 #endif
 
 // ── 서브시스템 객체 ──
@@ -47,9 +46,11 @@ static NoiseGuard        guard;
 
 #if UI_DISPLAY_PRESENT
   static DisplayUI display;
-#else
-  static NullSaver nullSaver;
 #endif
+static NullSaver nullSaver;   // 무디스플레이 보드(PinMap hasDisplay=false) 또는 UI_DISPLAY_PRESENT=0
+
+// 이 보드에서 화면/인코더를 쓰는가 — 빌드 옵션 + 보드별 배선(PinMap) 둘 다 만족해야
+static bool displayActive() { return UI_DISPLAY_PRESENT && boardHasDisplay(); }
 
 // ──────────────────────────────────────────────────────────────
 // 코디네이터 — 시스템 상태 전이 (Core 1 전용)
@@ -100,6 +101,8 @@ static void safePinInit() {
     auto out = [](uint8_t pin, uint8_t lvl){ digitalWrite(pin, lvl); pinMode(pin, OUTPUT); };
     // TMC2209 EN active-low: HIGH = 코일 차단
     out(pins().EN, HIGH);
+    // 무디스플레이 보드: TFT/인코더 핀은 배선이 없거나 다른 용도일 수 있어 절대 건드리지 않음
+    if (!displayActive()) return;
     // panel 신호 핀 idle 고정 (floating noise → 컨트롤러 손상 예방)
     out(pins().TFT_CS,   HIGH);
     out(pins().TFT_DC,   HIGH);
@@ -183,6 +186,8 @@ void setup() {
     delay(300);
     Serial.println("\n================================");
     Serial.printf("[BOOT] Film Processor %s 시작\n", Cfg::FW_VERSION);
+    Serial.printf("[BOOT] 빌드 사양 %s, 플래시 %u MB, PSRAM %u KB\n", FW_VARIANT,
+                  (unsigned)(ESP.getFlashChipSize() >> 20), (unsigned)(ESP.getPsramSize() >> 10));
     Serial.printf("[Pins] MAC %s → 핀 프로필: %s (STEP %u DIR %u EN %u)\n", boardMac(), pinProfileLabel(),
                   pins().STEP, pins().DIR, pins().EN);
     Serial.printf("[BOOT] reset reason: %d, free heap: %u\n",
@@ -208,23 +213,23 @@ void setup() {
     WebServer::Deps wd{};
     wd.motion = &motion; wd.recipe = &recipe; wd.temp = &temp;
     wd.cmd = &cmd; wd.wifi = &wifi; wd.stage = &stage; wd.guard = &guard;
-#if UI_DISPLAY_PRESENT
-    wd.saver = &display;
-#else
     wd.saver = &nullSaver;
+#if UI_DISPLAY_PRESENT
+    if (displayActive()) wd.saver = &display;
 #endif
     web.begin(wd);
 
     configWdt();
 
 #if UI_DISPLAY_PRESENT
-    DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd, &stage, &guard };
-    display.begin(dd);
-    display.start();
-    Serial.println("[Core] DisplayTask → Core 0 시작\n");
-#else
-    Serial.println("[Core] DisplayTask 비활성 (UI_DISPLAY_PRESENT=0)\n");
+    if (displayActive()) {
+        DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd, &stage, &guard };
+        display.begin(dd);
+        display.start();
+        Serial.println("[Core] DisplayTask → Core 0 시작\n");
+    } else
 #endif
+    Serial.println("[Core] DisplayTask 비활성 (무디스플레이 보드 또는 UI_DISPLAY_PRESENT=0)\n");
 }
 
 void loop() {

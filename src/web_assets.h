@@ -274,7 +274,12 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <span class="sect-lbl" data-i18n="sta_section"></span>
     <div class="form-grp">
       <label class="form-lbl" data-i18n="sta_ssid"></label>
-      <input class="form-in" id="set-sta-ssid" type="text" maxlength="32" autocomplete="off">
+      <div style="display:flex;gap:7px;">
+        <input class="form-in" id="set-sta-ssid" type="text" maxlength="32" autocomplete="off" style="flex:1;min-width:0;">
+        <button class="btn btn-outline btn-sm" id="scan-btn" onclick="scanWifi(true)" data-i18n="scan_btn"></button>
+      </div>
+      <div id="scan-st" style="font-size:12px;color:var(--muted);margin-top:5px;"></div>
+      <div id="scan-list" style="display:flex;flex-direction:column;gap:4px;margin-top:5px;max-height:220px;overflow-y:auto;"></div>
     </div>
     <div class="form-grp" style="margin-bottom:14px;">
       <label class="form-lbl" data-i18n="sta_pass"></label>
@@ -362,6 +367,24 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     </div>
   </div>
   <div class="card">
+    <div class="card-title" data-i18n="cal_title"></div>
+    <div class="info-row"><span data-i18n="cal_now"></span><span class="info-val" id="cal-now">—</span></div>
+    <div class="info-row"><span data-i18n="cal_cur"></span><span class="info-val" id="cal-cur">—</span></div>
+    <div style="font-size:12px;color:var(--muted);margin:8px 0;" data-i18n="cal_hint"></div>
+    <div style="display:flex;gap:7px;">
+      <input class="form-in" id="cal-ref" type="number" step="0.01" inputmode="decimal" placeholder="31.40" style="flex:1;min-width:0;">
+      <button class="btn btn-outline btn-sm" onclick="calAddPoint()" data-i18n="cal_add"></button>
+    </div>
+    <div id="cal-points" style="font-size:12px;margin-top:8px;"></div>
+    <div style="display:flex;gap:7px;margin-top:8px;">
+      <button class="btn btn-primary btn-sm" onclick="calSave()" data-i18n="cal_save"></button>
+      <button class="btn btn-outline btn-sm" onclick="calUndo()" data-i18n="cal_undo"></button>
+      <button class="btn btn-outline btn-sm" onclick="calClear()" data-i18n="cal_clear"></button>
+      <button class="btn btn-outline btn-sm" onclick="calReset()" data-i18n="cal_reset"></button>
+    </div>
+    <div id="cal-st" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+  </div>
+  <div class="card">
     <div class="card-title" data-i18n="about"></div>
     <div class="info-row"><span>Firmware</span><span class="info-val" id="ab-fw">—</span></div>
     <div class="info-row"><span>Uptime</span><span class="info-val" id="ab-up">—</span></div>
@@ -369,6 +392,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <div class="info-row"><span>Guard</span><span class="info-val" id="ab-guard">—</span></div>
     <div class="info-row"><span>MAC</span><span class="info-val" id="ab-mac" style="user-select:all">—</span></div>
     <div class="info-row"><span>Pin profile</span><span class="info-val" id="ab-pins">—</span></div>
+    <div class="info-row"><span>WiFi RSSI</span><span class="info-val" id="ab-rssi">—</span></div>
     <div class="info-row"><span>MCU</span><span class="info-val">ESP32-S3</span></div>
     <div class="info-row"><span>Driver</span><span class="info-val">TMC2209 (Stepper)</span></div>
     <div class="info-row"><span>Temp</span><span class="info-val">MAX31865 + PT100</span></div>
@@ -452,6 +476,16 @@ const STR={
     save_wait:'⏸ 저장 대기 — 모터 정지 후 자동 저장',save_ing:'저장 중…',save_ok:'✓ 보드에 저장됨',
     save_retry:'연결 끊김 — 재시도 중',save_fail:'⚠ 저장 실패 — 페이지를 닫지 마세요',
     err_busy_save:'모터 동작/레시피 진행 중에는 설정을 저장할 수 없습니다. 정지 후 다시 시도하세요.',
+    cal_title:'온도 보정 (PT100)',cal_now:'현재 측정',cal_cur:'적용 중인 보정',
+    cal_hint:'센서와 기준 온도계를 같은 물에 넣고 1~2분 안정시킨 뒤, 기준 온도를 입력하고 [점 기록]. 2점(예: 0°C 얼음물 + 30~40°C)이면 오프셋·기울기 모두 보정.',
+    cal_add:'점 기록',cal_undo:'마지막 점 삭제',cal_save:'보정 저장',cal_clear:'점 지우기',cal_reset:'보정 초기화',
+    cal_bad_ref:'기준 온도를 입력하세요 (-10~100°C)',cal_full:'이미 2점입니다. [보정 저장] 또는 [점 지우기]',
+    cal_sampling:'측정 중… (5초)',cal_fail_read:'센서 값을 읽지 못했습니다 (오류 확인)',
+    cal_unstable:'값이 아직 흔들립니다 — 30초 더 기다린 뒤 다시 기록하세요',cal_added:'기록됨',
+    cal_need:'먼저 점을 기록하세요',cal_far:'두 점의 온도 차이가 10°C 이상이어야 합니다',
+    cal_confirm:'보정을 저장할까요?\ngain {g}\noffset {o} Ω',cal_saved:'✓ 보정 저장됨',
+    cal_save_fail:'저장 실패',cal_reset_confirm:'보정을 초기화할까요? (gain 1, offset 0)',cal_reset_done:'초기화됨',
+    scan_btn:'검색',scan_ing:'주변 WiFi 검색 중… (2~4초, 잠시 연결이 느려질 수 있음)',scan_fail:'검색 실패 — 다시 시도하세요',scan_none:'검색된 WiFi 없음',scan_pick:'연결할 WiFi를 선택하세요',scan_picked:'선택됨 — 비밀번호 입력 후 저장하세요',
     board_id:'보드 번호',board_id_hint:'여러 대 운용 시 보드마다 다르게. 1번=192.168.4.1, 2번=5.1, 3번=6.1 (저장 후 재부팅)',
     multi_link:'멀티 보드 제어 열기',goto_hint:'단계를 누르면 이동',goto_fail:'단계 이동 실패',
     goto_confirm:'{n}단계 "{s}"(으)로 이동할까요?\n현재 단계를 감속 정지한 뒤 이동합니다.',
@@ -501,6 +535,16 @@ const STR={
     save_wait:'⏸ Save pending — saves when the motor stops',save_ing:'Saving…',save_ok:'✓ Saved to device',
     save_retry:'Connection lost — retrying',save_fail:'⚠ Save failed — keep this page open',
     err_busy_save:'Cannot save settings while the motor or a recipe is running. Stop first.',
+    cal_title:'Temperature Calibration (PT100)',cal_now:'Current reading',cal_cur:'Active calibration',
+    cal_hint:'Put the sensor and a reference thermometer in the same water, wait 1–2 min, enter the reference temperature and tap [Add point]. Two points (e.g. 0°C ice water + 30–40°C) correct offset and slope.',
+    cal_add:'Add point',cal_undo:'Undo point',cal_save:'Save',cal_clear:'Clear points',cal_reset:'Reset',
+    cal_bad_ref:'Enter the reference temperature (-10–100°C)',cal_full:'Already 2 points. Save or clear.',
+    cal_sampling:'Sampling… (5 s)',cal_fail_read:'Could not read the sensor (check fault)',
+    cal_unstable:'Reading still drifting — wait 30 s and try again',cal_added:'Point added',
+    cal_need:'Add a point first',cal_far:'The two points must be at least 10°C apart',
+    cal_confirm:'Save calibration?\ngain {g}\noffset {o} Ω',cal_saved:'✓ Calibration saved',
+    cal_save_fail:'Save failed',cal_reset_confirm:'Reset calibration? (gain 1, offset 0)',cal_reset_done:'Reset done',
+    scan_btn:'Scan',scan_ing:'Scanning nearby WiFi… (2–4 s, connection may lag briefly)',scan_fail:'Scan failed — try again',scan_none:'No networks found',scan_pick:'Select a network',scan_picked:'Selected — enter the password and save',
     board_id:'Board number',board_id_hint:'Use a different number per unit. #1=192.168.4.1, #2=5.1, #3=6.1 (reboots on save)',
     multi_link:'Open multi-board control',goto_hint:'Tap a step to jump',goto_fail:'Step jump failed',
     goto_confirm:'Jump to step {n} "{s}"?\nThe motor decelerates to a stop first.',
@@ -662,12 +706,14 @@ function updateStatusUI(){
   else{chip.className='chip chip-off';chip.textContent=t('sta_disconn');ipRow.style.display='none';}
   if(sd.fw){
     const kb=v=>(v/1024).toFixed(1);const u=sd.upSec|0;
-    document.getElementById('ab-fw').textContent=sd.fw;
+    document.getElementById('ab-fw').textContent=sd.fw+(sd.variant?' ('+sd.variant+')':'');
     document.getElementById('ab-up').textContent=Math.floor(u/3600)+'h '+String(Math.floor(u/60)%60).padStart(2,'0')+'m';
     document.getElementById('ab-heap').textContent=kb(sd.heapFree)+' / '+kb(sd.heapMin)+' / '+kb(sd.heapMax)+' KB';
     document.getElementById('ab-guard').textContent=sd.guard+' (reset '+sd.resetReason+')';
     document.getElementById('ab-mac').textContent=sd.mac||'—';
     document.getElementById('ab-pins').textContent=sd.pinProfile||'—';
+    calLive();
+    document.getElementById('ab-rssi').textContent=sd.staConn?(sd.rssi+' dBm'+(sd.rssi>=-60?' (좋음)':sd.rssi>=-70?' (보통)':' (약함)')):'—';
   }
 }
 
@@ -751,6 +797,87 @@ async function loadSettings(){
     document.getElementById('set-sta-dns').value=d.staDNS||'8.8.8.8';
     onStaticToggle();
   }catch(e){}
+}
+// ── 온도 보정 (1점/2점) ──
+//   각 점: 보드의 보정 전 측정저항 rtdOhm(5회 평균) + 사용자가 입력한 기준온도 → PT100 표준 저항.
+//   2점: R_true = gain·R_meas + offset 직선 맞춤 / 1점: gain 1, offset만. 점은 브라우저에 보관(새로고침 유지).
+const CAL_LS='cal_points_'+location.host;
+let calPts=[];try{calPts=JSON.parse(localStorage.getItem(CAL_LS))||[];}catch(e){}
+function ptOhm(t){const A=3.9083e-3,B=-5.775e-7,C=-4.183e-12;let r=1+A*t+B*t*t;if(t<0)r+=C*(t-100)*t*t*t;return 100*r;}
+function calSaveLS(){try{localStorage.setItem(CAL_LS,JSON.stringify(calPts));}catch(e){}}
+function calRender(){
+  document.getElementById('cal-points').innerHTML=calPts.map((p,i)=>`${i+1}) 기준 ${p.ref.toFixed(2)}°C · 측정 ${p.ohm.toFixed(3)}Ω`).join('<br>')||'';
+}
+function calLive(){
+  const n=document.getElementById('cal-now'),c=document.getElementById('cal-cur');if(!n)return;
+  n.textContent=sd.tempFault?'FAULT ('+(sd.tempFaultCode|0)+')':(sd.temperature>-100?sd.temperature.toFixed(2)+' °C · '+(sd.rtdOhm||0).toFixed(3)+' Ω':'—');
+  c.textContent=sd.calGain!==undefined?'gain '+(+sd.calGain).toFixed(5)+' · offset '+(+sd.calOffset).toFixed(3)+' Ω':'—';
+}
+async function calAddPoint(){
+  const ref=parseFloat(document.getElementById('cal-ref').value);
+  if(isNaN(ref)||ref<-10||ref>100){alert(t('cal_bad_ref'));return;}
+  if(calPts.length>=2){alert(t('cal_full'));return;}
+  const st=document.getElementById('cal-st');st.textContent=t('cal_sampling');
+  const xs=[];
+  for(let i=0;i<5;i++){try{const d=await (await fetch('/api/status')).json();if(!d.tempFault&&d.rtdOhm>50)xs.push(d.rtdOhm);}catch(e){}await new Promise(r=>setTimeout(r,1100));}
+  if(xs.length<3){st.textContent=t('cal_fail_read');return;}
+  const ohm=xs.reduce((a,b)=>a+b,0)/xs.length, spread=Math.max(...xs)-Math.min(...xs);
+  if(spread>0.08){st.textContent=t('cal_unstable');return;}   // ≈0.2°C 이상 흔들리면 아직 안정 안 됨
+  calPts.push({ref,ohm});calSaveLS();calRender();st.textContent=t('cal_added');
+  document.getElementById('cal-ref').value='';
+}
+async function calSave(){
+  if(!calPts.length){alert(t('cal_need'));return;}
+  let gain=1,offset;
+  if(calPts.length===1){offset=ptOhm(calPts[0].ref)-calPts[0].ohm;}
+  else{
+    const [a,b]=calPts;
+    if(Math.abs(b.ref-a.ref)<10){alert(t('cal_far'));return;}
+    gain=(ptOhm(b.ref)-ptOhm(a.ref))/(b.ohm-a.ohm);offset=ptOhm(a.ref)-gain*a.ohm;
+  }
+  if(!confirm(t('cal_confirm').replace('{g}',gain.toFixed(5)).replace('{o}',offset.toFixed(3))))return;
+  let r=null;try{r=await postJ('/api/temp/cal',{gain,offset});}catch(e){}
+  const st=document.getElementById('cal-st');
+  if(r&&r.ok){st.textContent=t('cal_saved');calPts=[];calSaveLS();calRender();}
+  else if(r&&r.status===409)st.textContent=t('err_busy_save');
+  else{let j={};try{j=await r.json();}catch(e){}st.textContent=t('cal_save_fail')+(j.error?' ('+j.error+')':r?' ('+r.status+')':'');}
+}
+function calUndo(){calPts.pop();calSaveLS();calRender();document.getElementById('cal-st').textContent='';}
+function calClear(){calPts=[];calSaveLS();calRender();document.getElementById('cal-st').textContent='';}
+async function calReset(){
+  if(!confirm(t('cal_reset_confirm')))return;
+  let r=null;try{r=await postJ('/api/temp/cal',{reset:true});}catch(e){}
+  document.getElementById('cal-st').textContent=r&&r.ok?t('cal_reset_done'):t('cal_save_fail');
+}
+calRender();
+
+// 주변 WiFi 검색 — 보드가 비동기 검색, 1초마다 결과 확인(최대 12초). 항목 클릭 → SSID 칸 채움.
+let _scanBusy=false;
+async function scanWifi(force){
+  if(_scanBusy)return;_scanBusy=true;
+  const st=document.getElementById('scan-st'),list=document.getElementById('scan-list'),btn=document.getElementById('scan-btn');
+  btn.disabled=true;st.textContent=t('scan_ing');list.innerHTML='';
+  let j=null;
+  for(let i=0;i<12;i++){
+    try{j=await (await fetch('/api/wifi/scan'+(force&&i===0?'?refresh=1':''))).json();}catch(e){j=null;}
+    if(j&&!j.scanning)break;
+    await new Promise(r=>setTimeout(r,1000));
+  }
+  _scanBusy=false;btn.disabled=false;
+  if(!j||j.scanning){st.textContent=t('scan_fail');return;}
+  const nets=(j.nets||[]).sort((a,b)=>b.rssi-a.rssi);
+  if(!nets.length){st.textContent=t('scan_none');return;}
+  st.textContent=t('scan_pick');
+  const bars=r=>r>=-55?'▂▄▆█':r>=-67?'▂▄▆_':r>=-75?'▂▄__':'▂___';
+  list.innerHTML=nets.map((n,i)=>`<button class="btn btn-outline btn-sm" style="display:flex;justify-content:space-between;text-align:left;" onclick="pickSsid(${i})"><span>${escH(n.ssid)}${n.open?' 🔓':''}</span><span style="font-family:monospace;color:var(--muted)">${bars(n.rssi)} ${n.rssi}dBm · ch${n.ch}</span></button>`).join('');
+  list._nets=nets;
+}
+function pickSsid(i){
+  const n=document.getElementById('scan-list')._nets[i];if(!n)return;
+  document.getElementById('set-sta-ssid').value=n.ssid;
+  document.getElementById('scan-list').innerHTML='';
+  document.getElementById('scan-st').textContent=t('scan_picked');
+  document.getElementById('set-sta-pass').focus();
 }
 async function saveSettings(){
   const apSSID=document.getElementById('set-ap-ssid').value.trim();

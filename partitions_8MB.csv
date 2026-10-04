@@ -1,0 +1,9 @@
+# Custom partition table - ESP32-S3 N8R2 (8MB Flash, 2MB Quad PSRAM) — 무디스플레이 바디2 등
+#   3MB APP x 2 (OTA) + ~1.9MB LittleFS
+#   label "spiffs" matches LittleFS.begin() default partition_label
+# Name,     Type, SubType,  Offset,   Size,    Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x300000,
+app1,       app,  ota_1,    0x310000, 0x300000,
+spiffs,     data, spiffs,   0x610000, 0x1F0000,

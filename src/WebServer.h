@@ -48,6 +48,11 @@ private:
     size_t            _upWritten = 0;
     File              _upFile;        // 업로드 중 열린 채 유지 (청크마다 open/close 회피)
 
+    // WiFi 검색 결과 캐시 ({"nets":[…]} JSON)
+    String            _scanJson;
+    uint32_t          _scanMs = 0;
+    bool              _scanPending = false;   // 내가 시작한 검색이 진행 중
+
     // 레시피 저장 — 동시 저장 차단용 소유자 + 열린 임시파일
     AsyncWebServerRequest* _recReq = nullptr;
     uint32_t          _recLastMs = 0;

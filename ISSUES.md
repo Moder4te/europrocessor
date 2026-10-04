@@ -1,7 +1,7 @@
 # 현존 이슈 정리 — 2026-10-04
 
-대상: `rotary_processor` 펌웨어 v4.3 → v4.4(작업 중, **미커밋·실기 미검증**)
-기본 사용 환경: **집 WiFi 없음, 폰/PC가 보드 AP(`FilmProcessor`, 192.168.4.1)에 직접 접속**
+대상: `rotary_processor` 펌웨어 v4.3 → **v4.8.1** (바디1·바디2 OTA 배포 완료)
+기본 사용 환경: **집 WiFi 없음, 폰이 보드 AP에 직접 접속**. 현재 구성: 바디1이 바디2 AP(`FilmProcessor`, 192.168.5.1)에 STA(192.168.5.11)로 연결, 폰은 바디2 AP → `/multi`로 2대 제어
 
 우선순위: 🔴 즉시 / 🟠 다음 업데이트 / 🟡 여유 있을 때
 
@@ -76,7 +76,7 @@
 
 ---
 
-## 4. v4.4 작업분 (미커밋, 빌드만 통과, 실기 미검증)
+## 4. v4.4~v4.8.1 변경 이력 (커밋 완료, 항목별 실기 검증 여부는 각 행·5장 참고)
 
 빌드: RAM 16.8% / Flash 45.7%
 
@@ -102,6 +102,11 @@
 | **v4.6.3 🔴 reset 4(패닉) 수정**: 모터 운전 중 TFT "Run recipe" 진입 시 크래시. UART 백트레이스 → `pcnt_intr_service`가 PSRAM에 할당된 `p_pcnt_obj`(0x3d800908)를 플래시 읽기(캐시 OFF) 중 접근. IDF 4.4 pcnt 드라이버가 `MALLOC_CAP_DEFAULT`로 할당하는 버그. FAS 초기화 동안 PSRAM을 점유해 내부 RAM 할당 강제 | `MotionController.cpp` |
 | **v4.6.4 운전 중 플래시/재부팅 전면 차단**: 보드가 `motorBusy()`(회전·감속·레시피 진행/일시정지/확인대기)면 설정 저장(재부팅)·레시피 저장·화면보호기 업로드/삭제·OTA 모두 409. TFT 화면보호기 설정·OTA 확정 NVS 쓰기는 정지 시까지 지연. 레시피 저장: 동시 저장 409, 64KB 상한, 쓰기 실패 감지, 커밋 전 JSON 검증. 웹: 저장 대기/재시도/실패 표시, 대기 중 페이지 이탈 경고, 설정 저장 결과 확인 | `WebServer.*`, `DisplayUI.cpp`, `main.cpp`, `web_assets.h` |
 | **v4.7 보드별 핀 배치**: `PinMap.h` 한 파일에 배치표. 부팅 시 칩 MAC으로 자동 선택(미등록 → `DEFAULT_PINS`) → 같은 .bin을 어느 보드에 OTA해도 안전. 금지 GPIO·중복·인코더 핀(<32)은 `static_assert`로 빌드 차단. MAC/프로필은 웹 디바이스 정보·TFT System info·시리얼 `[Pins]`에 표시 | `PinMap.*`, `Config.h` 외 |
+| **v4.7.1 무디스플레이·N8R2 지원**: `PinMap.h` `hasDisplay`(false면 TFT/인코더 핀 미구동·화면 태스크 미기동). `[env:n8r2]`(8MB/Quad PSRAM 2MB) + `partitions_8MB.csv`. OTA는 이미지 헤더 플래시 용량이 보드와 다르면 거부(사양 불일치 .bin 차단). 바디2(MAC D0:CF:13:59:14:78, v2.2 → v4.7.1) USB 이전 완료, 레시피 복원. 백업: `backups/` | `PinMap.*`, `main.cpp`, `WebServer.cpp`, `platformio.ini` |
+| **v4.7.2**: 상태 API에 `rssi`(STA 수신 dBm)·`apClients` 추가, 웹 디바이스 정보·멀티 카드에 RSSI 표시 | `WebServer.cpp`, `web_assets.h`, `web_multi.h` |
+| **v4.7.3~4 WiFi 검색**: `/api/wifi/scan`(비동기, 15초 캐시, 같은 SSID 병합, 신호순) + 설정 화면 "검색" 버튼 → 목록 선택 시 SSID 자동 입력. STA 접속 시 내부 검색 결과(0개)를 오인하던 첫 검색 버그 수정 | `WebServer.*`, `web_assets.h` |
+| **v4.7.5~8 온도센서 보드별 설정**: 전역 `TEMP_SENSOR_PRESENT=false`(바디1 불량 보드 격리)가 바디2까지 끄던 문제 → `PinMap.h` `rtdWires`(0=격리, 2/3/4) 보드별. 상태 API `tempFaultCode`·`rtdWires` 추가. 유효범위(-20~100°C) 밖은 fault 0x02 | `PinMap.*`, `TemperatureSensor.cpp`, `WebServer.cpp`, `Config.h` |
+| **v4.8~4.8.1 온도 보정**: 측정저항 선형 보정(R_cal = gain·R + offset, NVS "tcal" 보드별, 범위 gain 0.85~1.15/offset ±20Ω). 웹 설정 "온도 보정" 카드(점 기록 5초 평균·흔들림 0.2°C 초과 거부, 1점/2점, 마지막 점 삭제, 초기화, 실패 사유 표시). 상태 API `rtdOhm`·`calGain`·`calOffset`. 온도 계산을 CVD 직접 역산으로 교체 | `TemperatureSensor.*`, `WebServer.cpp`, `web_assets.h` |
 | **NoiseGuard 신규**: 인코더/버튼 노이즈 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋 3회 → 모터 잠금 | `NoiseGuard.*`, `DisplayUI.cpp` |
 
 **실기 검증 시 확인할 것**
@@ -120,5 +125,8 @@
 | F2 | 🟡 | 보드 재부팅 후 폰/PC가 AP에 재접속하기까지 60초 이상 (Windows는 자동 재접속 안 되는 경우도 있음) | 클라이언트 측 문제. 재부팅 후 WiFi 수동 재연결 안내 |
 | F3 | 🟡 | `resetReason 0` = 원인 불명(대부분 USB 리셋). 전원 투입은 1, 소프트웨어 재시작은 3 | 문서화만 |
 | F5 | 🟡 | 코어덤프가 켜져 있지만 `coredump` 파티션이 없어 크래시 기록이 안 남음. 파티션 변경은 LittleFS 크기가 바뀌어 레시피가 지워지므로 보류 — 크래시 분석은 UART(GPIO43/44) 녹화로 | — |
+| F6 | 🟡 | **보드 사양이 2종** (바디1 N16R8 / 바디2 N8R2) → OTA 파일도 2종: `.pio/build/esp32-s3-devkitc-1/firmware.bin`(N16R8), `.pio/build/n8r2/firmware.bin`(N8R2). 잘못 올리면 보드가 'wrong board variant'로 거부 | 빌드: `pio run -e esp32-s3-devkitc-1 -e n8r2` |
+| F7 | 🟠 | **바디1 무선 링크 불량** (2026-10-04 실측). 바디1 자기 AP 직결: ping 64B 12ms·1000B 손실 15%, 68KB 페이지 전부 8초 타임아웃. 집 WiFi(RSSI -56dBm) 경유도 동일. 디스플레이 끈 진단 펌웨어도 동일 → 펌웨어 아님. 같은 코드의 바디2는 3ms/0.11초 정상. **바디1을 바디2 AP에 STA(-37dBm)로 붙이면 0.19초·손실 0 → 강한 신호에서만 정상 = 바디1 수신 감도 저하(안테나 가림/1U 외부안테나 누락/전원 노이즈 의심)** | 안테나 주변 금속·케이블 점검, 모듈 1U 여부, USB 단독 전원으로 비교. 임시: 바디1을 바디2 AP에 STA(192.168.5.11)로 운용. WiFi 검색 4회 비교: 같은 AP를 바디1이 약 15dB 약하게 수신(105-4603A -93 vs -78dBm), 바디1은 2~3개만 검출 vs 바디2 4~17개 |
+| F8 | 🟠 | **바디2 온도 정확도 (작업 보류 2026-10-04)**: 3선 결선(A)+2선 모드. 보정 전 얼음물 -0.44°C(정상) / 31.4°C 기준 → 28.55°C, 수비드 38°C에서도 2.5~3°C 낮음 → 기울기 -7.6% (0.3594 vs 0.3890 Ω/°C). 2점 계산 gain 1.0824 / offset -8.06Ω (미저장). 3선 모드는 RTD=0(fault 0x41), 결선 반대는 합선. 원인 후보: ③보드 점퍼(3선)↔펌웨어(2선) 불일치 / ②센서 누설(물 침투) / ④비표준 α | **다음**: ①멀티미터로 센서 직접 측정(0°C≈100.0Ω, 38°C≈114.8Ω) ②선↔외피 절연(MΩ 이상) ③원인 확인 후 0°C+38°C(기준온도계) 2점 보정 저장. 누설이면 보정 무의미 → 센서 교체 |
 | F4 | ✅ | 동시 연결 부하: PC 1대에서 12개 동시 요청 × 40회 = 480/480 성공, 평균 49ms. 메모리 최저 199KB 후 회복 | — |
 
