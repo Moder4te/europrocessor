@@ -103,15 +103,21 @@
     <li><a href="#config">11 · 설정 상수</a></li>
     <li><a href="#build">12 · 빌드 &amp; 플래시</a></li>
     <li><a href="#safety">13 · 안전 설계</a></li>
-    <li><a href="#trouble">14 · 트러블슈팅</a></li>
+    <li><a href="#multi">14 · 멀티 보드 &amp; 네트워크</a></li>
+    <li><a href="#ota">15 · OTA &amp; 보드 사양</a></li>
+    <li><a href="#tcal">16 · 온도 보정</a></li>
+    <li><a href="#trouble">17 · 트러블슈팅</a></li>
   </ol>
 </nav>
 
 <main>
-<h1>europrocessor<span class="v">v4.1</span></h1>
+<h1>europrocessor<span class="v">v4.8.1</span></h1>
 <p class="lede">ESP32-S3 기반 <b>아날로그 필름 현상용 로터리 프로세서</b> 제어 펌웨어 전체 설명서.
 스테퍼 모터로 현상 탱크를 정/역 교반하고, 약품 온도를 측정하며, 웹 UI와 물리 디스플레이(TFT + 로터리 인코더)로
-레시피/수동 운전을 제어한다. 단일 <code>.ino</code> 모놀리식에서 <b>PlatformIO 기반 C++ OOP</b>로 이관(v4.0)된 구조 기준.</p>
+레시피/수동 운전을 제어한다. 단일 <code>.ino</code> 모놀리식에서 <b>PlatformIO 기반 C++ OOP</b>로 이관(v4.0)된 구조 기준.
+v4.4~v4.8.1에서 안정성 전수 개선(PCNT 패닉 근본 수정·노이즈 가드·운전 중 플래시 차단), 웹 OTA, 멀티 보드 제어,
+보드별 핀 배치(칩 MAC 자동 선택), 무디스플레이·N8R2 지원, WiFi 검색, 온도 보정이 추가되었다.
+현존 이슈·실측 기록은 <code>ISSUES.md</code>.</p>
 
 <!-- ───────────────────────────── -->
 <section id="overview">
@@ -120,9 +126,10 @@
 <ul>
   <li><b>모터 타이밍 보장</b> — 스텝 펄스는 하드웨어 ISR(FastAccelStepper)이 독립 생성하고, 상태머신은 Core 1에 격리되어 WiFi·웹·디스플레이 부하와 무관하게 정/역 교반 타이밍을 유지한다.</li>
   <li><b>크로스코어 안전성</b> — Core 0(웹/UI)은 모터·레시피 상태를 직접 건드리지 않는다. 모든 조작은 <code>CommandQueue</code>로 전달되어 Core 1 단일 코어에서만 상태가 바뀐다. 레이스를 구조적으로 제거.</li>
-  <li><b>물리 손상 방지</b> — 부팅 즉시 모터 EN 차단·패널 핀 idle 고정, 가속/감속 곡선으로 탈조 방지, 플래시 연산과 인코더 인터럽트의 충돌(캐시 panic) 게이팅.</li>
+  <li><b>물리 손상 방지</b> — 부팅 즉시 모터 EN 차단·패널 핀 idle 고정, S-커브 감속(일시정지·단계 이동 포함), 운전 중 플래시 쓰기·재부팅 금지, 노이즈 가드, 연속 크래시 시 모터 잠금.</li>
+  <li><b>펌웨어 하나로 여러 보드</b> — 핀 배치·화면 유무·온도센서 결선을 칩 MAC으로 자동 선택. 같은 사양이면 같은 <code>.bin</code>을 OTA.</li>
 </ul>
-<div class="note"><b>읽는 순서.</b> 하드웨어를 만지는 사람은 1~3·13장, 코드를 보는 사람은 4~9장, API를 쓰는 사람은 10장, 빌드는 12장부터 보면 된다. 9장(크래시 분석)은 이 프로젝트에서 가장 비싸게 배운 교훈이라 따로 떼어 두었다.</p></div>
+<div class="note"><b>읽는 순서.</b> 하드웨어를 만지는 사람은 1~3·13장, 코드를 보는 사람은 4~9장, API를 쓰는 사람은 10장, 빌드·OTA는 12·15장, 여러 대 운용은 14장, 온도 정확도는 16장부터 보면 된다. 9장(크래시 분석)은 이 프로젝트에서 가장 비싸게 배운 교훈이라 따로 떼어 두었다.</div>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -130,11 +137,11 @@
 <h2><span class="n">1</span>하드웨어 사양</h2>
 <table>
 <tr><th>항목</th><th>사양</th></tr>
-<tr><td><b>MCU</b></td><td>ESP32-S3 N16R8 (16MB Flash / 8MB OPI PSRAM), 듀얼코어 Xtensa LX7</td></tr>
+<tr><td><b>MCU</b></td><td>ESP32-S3, 듀얼코어 Xtensa LX7. 사양 2종: <b>N16R8</b>(16MB Flash / 8MB Octal PSRAM, 바디1) · <b>N8R2</b>(8MB Flash / 2MB Quad PSRAM, 바디2) — 빌드 환경이 다름(15장)</td></tr>
 <tr><td><b>모터</b></td><td>NEMA17 + 3.71:1 유성기어, 1.8°/스텝 (200 step/rev)</td></tr>
 <tr><td><b>드라이버</b></td><td>TMC2209 (STEP/DIR/EN), StealthChop, 1/8 마이크로스텝 → 1600 step/rev</td></tr>
-<tr><td><b>온도센서</b></td><td>MAX31865 + PT100, RREF 412Ω(실측)·RNOMINAL 100Ω — <b>현재 보드 불량으로 코드 격리</b> (<code>Cfg::TEMP_SENSOR_PRESENT=false</code>)</td></tr>
-<tr><td><b>디스플레이</b></td><td>ST7789 320×240 TFT (하드웨어 FSPI) — 패널 색반전 보정 <code>invertDisplay(false)</code></td></tr>
+<tr><td><b>온도센서</b></td><td>MAX31865 + PT100, RREF 412Ω·RNOMINAL 100Ω. 사용 여부·결선은 <b>보드별</b>(<code>PinMap.h</code> <code>rtdWires</code>): 바디1 격리(보드 불량), 바디2 2선 모드. 선형 보정 지원(16장)</td></tr>
+<tr><td><b>디스플레이</b></td><td>ST7789 320×240 TFT (하드웨어 FSPI) — 패널 색반전 보정 <code>invertDisplay(false)</code>. 무디스플레이 보드는 <code>hasDisplay=false</code></td></tr>
 <tr><td><b>입력</b></td><td>EC11 로터리 인코더(A/B/PUSH) + 확정 버튼(KO)</td></tr>
 <tr><td><b>전원</b></td><td>USB-PD 100W → CH224K 디코이 20V 트리거 → 모터 직결 + 벅(20V→5V)→ESP</td></tr>
 </table>
@@ -192,7 +199,7 @@ s_h = f²·v_t·T / (1.5·(1+f)) ≈ 0.22·v_t  <span class="c">// 저크제한(
 <!-- ───────────────────────────── -->
 <section id="pins">
 <h2><span class="n">3</span>핀 배정</h2>
-<p>핀 상수는 모두 <code>src/Config.h</code>의 <code>namespace Pin</code>에 <code>constexpr</code>로 정의된 단일 진실원이다.</p>
+<p>보드마다 배선이 달라 핀은 <code>src/PinMap.h</code> 한 파일에서 관리한다. 아래는 기본 배치(<code>DEFAULT_PINS</code>, 바디1). 코드에서는 <code>pins().STEP</code>처럼 접근한다.</p>
 <pre><code><span class="c">─ A변 (3v3 쪽) ─────────────────────────────────────────</span>
 ST7789    SCK=12  MOSI=11  CS=10  DC=9  RST=8  BL=18   <span class="c">(하드웨어 FSPI)</span>
 EC11      A=17    B=16     PUSH=15
@@ -200,7 +207,20 @@ KO 버튼   7
 <span class="c">─ B변 (V5in 쪽) ────────────────────────────────────────</span>
 MAX31865  CS=13   MOSI=14  MISO=21  CLK=47   <span class="c">(소프트웨어 SPI, 연속 4핀)</span>
 TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활성, HIGH=차단)</span></code></pre>
-<div class="note"><b>회피한 핀.</b> ESP32-S3 strapping(0/3/45/46), UART0(43/44 TX/RX), USB(19/20), Flash(26~32), OPI PSRAM(35~37), RGB LED(48) — 전부 회피했다. 터미널 보드 양변에 기능별로 인접 배치.</div>
+<h3>보드별 배치 (<code>PinMap.h</code>)</h3>
+<ul>
+  <li>부팅 시 <b>칩 MAC으로 <code>BOARDS[]</code>에서 배치를 자동 선택</b>, 미등록 보드는 <code>DEFAULT_PINS</code>. 정적 초기화 중(TFT·MAX31865 생성자)에 불러도 안전하도록 함수 내 static으로 1회 결정.</li>
+  <li>각 항목: 핀 17개 + <code>hasDisplay</code>(false면 TFT·인코더·버튼 핀을 <b>전혀 구동하지 않고</b> 화면 태스크 미기동) + <code>rtdWires</code>(0=온도센서 격리, 2/3/4=결선).</li>
+  <li>무디스플레이 보드는 앞 7개(STEP DIR EN | MAX CS MOSI MISO CLK)만 적고 나머지는 생략(0).</li>
+  <li>인코더 ISR은 플래시 함수인 <code>pins()</code>를 호출하지 않고 <code>DRAM_ATTR</code> 핀 사본을 읽는다.</li>
+</ul>
+<table>
+<tr><th>보드</th><th>MAC</th><th>사양</th><th>배치</th></tr>
+<tr><td>바디1</td><td><code>A0:F2:62:E5:D9:B0</code></td><td>N16R8, 디스플레이</td><td>기본 배치, 온도센서 격리 (<code>rtdWires=0</code>)</td></tr>
+<tr><td>바디2</td><td><code>D0:CF:13:59:14:78</code></td><td>N8R2, 무디스플레이</td><td>STEP 5 · DIR 6 · EN 7 · MAX CS 2 / MOSI 38 / MISO 39 / CLK 40, <code>rtdWires=2</code></td></tr>
+</table>
+<div class="note"><b>빌드 타임 검증.</b> 금지 GPIO(strapping 0/3/45/46, USB 19/20, Flash·PSRAM 26~37, UART0 43/44, RGB LED 48, 존재하지 않는 ≥48)·<b>중복 핀</b>·<b>인코더 핀 ≥32</b>·잘못된 <code>rtdWires</code>는 <code>static_assert</code>로 컴파일 에러.</div>
+<div class="warn"><b>새 보드 등록.</b> 웹 설정 → 디바이스 정보의 MAC 확인 → <code>BOARDS[]</code>에 <code>{ "MAC", "이름", { 핀… }, hasDisplay, rtdWires }</code> 한 줄 추가 → 빌드·OTA. ESP 보드만 교체하면 MAC이 바뀌므로 표의 MAC도 갱신.</div>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -211,7 +231,7 @@ TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활�
 <table>
 <tr><th>코어</th><th>담당</th></tr>
 <tr><td><b>Core 1</b><br>(<code>loop()</code>)</td><td>모터 상태머신 + 레시피 타이밍 (시간 크리티컬). FastAccelStepper 하드웨어 ISR이 스텝 펄스를 독립 생성.</td></tr>
-<tr><td><b>Core 0</b></td><td>WiFi 스택 + AsyncWebServer + <code>tempTask</code>(온도 1Hz) + <code>displayTask</code>(UI ~25Hz)</td></tr>
+<tr><td><b>Core 0</b></td><td>WiFi 스택 + AsyncWebServer + <code>tempTask</code>(온도 1Hz) + <code>displayTask</code>(UI ~25Hz, 입력 노이즈 감시, 디스플레이 보드만)</td></tr>
 </table>
 <div class="crit"><b>핵심 규약.</b> 웹 핸들러·디스플레이(Core 0)는 모터/레시피 상태를 <b>직접 건드리지 않는다.</b> 모든 조작은 <code>CommandQueue</code>로 enqueue → Core 1의 <code>loop()</code>이 dispatch하여 <b>단일 코어에서만</b> 상태를 변경한다. 이로써 stepper·모터·레시피 상태 레이스를 원천 제거.</div>
 
@@ -225,14 +245,19 @@ TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활�
 </table>
 
 <h3>loop() 한 사이클</h3>
-<pre><code><span class="k">0)</span> cmd.consumeEstop()  <span class="a">→</span> stopAll()        <span class="c">// 비상정지 최우선 (큐 우회)</span>
+<pre><code><span class="k">0)</span> cmd.consumeEstop()  <span class="a">→</span> stopAll() + 큐·스테이징 폐기  <span class="c">// 정지 직전 쌓인 기동 명령 재기동 방지</span>
+    guard.update(); guard.takeTrip() <span class="a">→</span> noiseStop()      <span class="c">// 노이즈 지속 → 레시피 일시정지/감속 정지</span>
+    OTA 확정 (60초 정상 + 모터 정지 시 NVS pending 해제)
 <span class="k">1)</span> while cmd.dequeue(c) <span class="a">→</span> dispatch(c)      <span class="c">// 모든 모터/레시피 변경은 여기서만</span>
-<span class="k">2)</span> stage.consume()     <span class="a">→</span> stopAll()+load()  <span class="c">// 스테이징 레시피 적용</span>
-<span class="k">3)</span> wifi.processDns(); motion.update(); recipe.update();  <span class="c">// 비차단 업데이트</span></code></pre>
+<span class="k">2)</span> stage.consume()     <span class="a">→</span> stopAll()+load()  <span class="c">// 스테이징 레시피 적용 (모터 잠금이면 거부)</span>
+<span class="k">3)</span> wifi.update(); motion.update(); recipe.update();  <span class="c">// DNS + STA 재연결 백오프 / 비차단 업데이트</span>
+<span class="k">4)</span> 10초마다 [Heap] 로그 (내부 RAM free / min / largest)</code></pre>
 
 <h3>모듈 구성 (<code>src/</code>)</h3>
 <pre><code>main.cpp              App 코디네이터 — 객체 소유·배선, setup/loop, 상태 전이
-Config.h              핀/물리 상수 (Pin:: / Cfg::, constexpr 단일 진실원)
+Config.h              물리 상수 (Cfg::, constexpr) · FW_VERSION · 노이즈/온도 임계값
+PinMap.*              보드별 핀 배치 + hasDisplay + rtdWires (칩 MAC 자동 선택, static_assert 검증)
+NoiseGuard.*          입력 노이즈 버스트 → 모터 정지 이벤트, 연속 비정상 리셋 → 모터 잠금 (RTC_NOINIT)
 Types.h               공유 도메인 타입 (MotorState, StepInfo, CmdType, Cmd)
 CommandQueue.h        크로스코어 명령 큐 + 비상정지 플래그
 RecipeStage.h         크로스코어 레시피 스테이징 버퍼 (뮤텍스)
@@ -243,6 +268,7 @@ TemperatureSensor.*    MAX31865 — Core 0 태스크, 뮤텍스 보호
 WifiManager.*          AP+STA 동시 모드, DNS/mDNS, Preferences
 WebServer.*            ESPAsyncWebServer 라우트 + 상태 JSON + 스테이징
 web_assets.h          웹 UI HTML/CSS/JS (PROGMEM 임베드)
+web_multi.h           멀티 보드 제어 페이지 /multi (브라우저가 각 보드 API 직접 호출)
 DisplayUI.*            ST7789 + 인코더 + 버튼 UI (Core 0 태스크, ISaver 구현)
 nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flash 상수)</code></pre>
 </section>
@@ -258,9 +284,12 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>stopAll()</code></td><td>비상정지 — 모터 즉시 정지 + 레시피 clear + 모드 리셋(manual off, cycle on)</td></tr>
 <tr><td><code>safeStop()</code></td><td>가속도 곡선 따라 감속 후 정지 (탈조·관성 충격 없음)</td></tr>
 <tr><td><code>manualStart(rpm,fwd,cycle,rotSec)</code></td><td>수동 운전 시작</td></tr>
-<tr><td><code>dispatch(Cmd)</code></td><td>큐에서 꺼낸 명령을 위 함수로 분기</td></tr>
-<tr><td><code>safePinInit()</code></td><td><b>setup 최우선</b> — EN=HIGH(코일 차단), 패널 핀 idle 고정, 입력 풀업</td></tr>
-<tr><td><code>setup()</code></td><td>핀 안전 고정 → 서브시스템 init → 태스크 기동. WDT 6초.</td></tr>
+<tr><td><code>noiseStop()</code></td><td>노이즈 가드 트립 — 레시피 진행 중이면 일시정지(재개 가능), 아니면 감속 정지</td></tr>
+<tr><td><code>dispatch(Cmd)</code></td><td>큐에서 꺼낸 명령을 위 함수로 분기 (STOP/PAUSE/CONFIRM/MANUAL/SAFE_STOP/SKIP/GOTO)</td></tr>
+<tr><td><code>otaRollbackIfCrashLoop()</code></td><td>OTA 직후 크래시 루프(가드 잠금)면 이전 파티션으로 롤백 + 리셋 카운터 초기화</td></tr>
+<tr><td><code>safePinInit()</code></td><td><b>setup 최우선</b> — 레벨 먼저·방향 나중으로 EN=HIGH(글리치 없음), 디스플레이 보드만 패널 핀 idle 고정·입력 풀업</td></tr>
+<tr><td><code>mountFs()</code></td><td>LittleFS 마운트. 1차 실패 시 즉시 포맷하지 않고 1회 재시도(부팅 전원 불안정으로 레시피 소실 방지)</td></tr>
+<tr><td><code>setup()</code></td><td>핀 안전 고정 → 가드(리셋 원인 집계) → 서브시스템 init → 화면 태스크(디스플레이 보드만). WDT 6초.</td></tr>
 <tr><td><code>loop()</code></td><td>위 「loop() 한 사이클」 참조 (Core 1)</td></tr>
 </table>
 
@@ -271,36 +300,44 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><th>API</th><th>설명</th></tr>
 <tr><td><code>beginRun(rpm,fwd)</code></td><td>출력축 RPM·방향으로 구동 시작</td></tr>
 <tr><td><code>stopImmediate()</code></td><td>비상: forceStop + EN 차단 + IDLE (targetRpm=0)</td></tr>
-<tr><td><code>freeze()</code></td><td>일시정지: halt + EN 차단 + IDLE (targetRpm 유지)</td></tr>
-<tr><td><code>requestSafeStop()</code></td><td>가속도 곡선 감속 후 IDLE</td></tr>
+<tr><td><code>requestSafeStop()</code></td><td>가속도 곡선 감속 후 IDLE — 안전정지·일시정지·단계 이동이 모두 이 경로 (v4.6.1에서 즉시 정지 <code>freeze()</code> 삭제)</td></tr>
+<tr><td><code>setLocked(on)</code></td><td>노이즈 가드 모터 잠금 — <code>beginRun()</code> 단일 차단점에서 모든 기동 거부</td></tr>
 <tr><td><code>requestStepStop()</code> / <code>takeStepStopped()</code></td><td>레시피 단계 종료 감속 요청 / 완료 1회성 이벤트</td></tr>
 <tr><td><code>state() · curRpm() · targetRpm() · isFwd() · cycle()</code></td><td>상태 조회 (const)</td></tr>
 </table>
+<div class="warn"><b>초기화 시 PSRAM 점유.</b> <code>begin()</code>은 FastAccelStepper 초기화 동안 PSRAM 여유 블록을 전부 잡아 PCNT 드라이버 객체가 내부 RAM에 할당되게 한다(9장).</div>
 
 <h3><code>RecipeRunner</code> — 레시피 시퀀서</h3>
 <p><code>steps</code> 벡터를 뮤텍스로 보호(웹 <code>buildStatus</code>가 Core 0에서 동시 읽기)하며, 모터는 <code>MotionController</code> 경유로만 구동한다.</p>
 <pre><code>load() <span class="a">→</span> startStep(0) <span class="a">→</span> 단계 지속시간 경과 시 requestStepStop()
        <span class="a">→</span> 감속 완료(takeStepStopped) <span class="a">→</span> waitConfirm(약품 교체 대기)
        <span class="a">→</span> confirm() <span class="a">→</span> 다음 단계 …</code></pre>
-<p>그 외: <code>pauseToggle()</code> · <code>skipStep()</code>(현재 단계 건너뜀) · <code>snapshot()</code>(표시용 상태 스냅샷, 뮤텍스 밖 안전 사용).</p>
+<p>그 외: <code>pauseToggle()</code>(감속 정지) · <code>skipStep()</code> / <code>gotoStep(idx)</code>(공통 <code>switchTo()</code> — 감속 정지 완료 후 목표 단계 시작) · <code>snapshot()</code>(표시용 상태 스냅샷) · <code>copySteps()</code>(웹 <code>/api/recipe</code>용 단계 목록).</p>
 
 <h3><code>TemperatureSensor</code> — 온도 측정</h3>
 <p>Core 0 전용 태스크에서 MAX31865를 1Hz 폴링(소프트웨어 SPI). 모터 코어에 영향 없음. fault는 즉시 clear하지 않고 <b>연속 5회 누적 후에만</b> 시도 → 단선/접촉불량을 UI에서 끊김 없이 관찰.</p>
 <ul>
-  <li><b>결선 모드</b>: <code>Cfg::RTD_WIRES</code>(2/3/4) — 보드 솔더점퍼와 일치 필수.</li>
+  <li><b>결선 모드</b>: 보드별 <code>rtdWires</code>(2/3/4) — 보드 솔더점퍼와 일치 필수.</li>
   <li><b>진단</b>: 부팅 시 threshold 레지스터 SPI 라운드트립 자가진단(칩·통신 검증) + fault 비트 디코드 + raw RTD 출력.</li>
-  <li><b>격리</b>: <code>TEMP_SENSOR_PRESENT=false</code>면 init·폴링 태스크 미생성 → <code>temperature()=TEMP_UNREAD</code>, fault 없음(디스플레이 <code>--.-</code>). <i>현재 센서 보드 불량으로 격리됨 — 양품 장착 시 <code>true</code> 복귀.</i></li>
+  <li><b>격리</b>: <code>rtdWires=0</code>이면 init·폴링 태스크 미생성, MAX31865 핀도 건드리지 않음 → <code>temperature()=TEMP_UNREAD</code>(화면 <code>--.-</code>).</li>
+  <li><b>오류 판정</b>: 칩 fault 비트 + SW 플래그 — <code>0x01</code> SPI 미통신(raw 0x0000/0x7FFF), <code>0x02</code> 유효범위(-20~100°C) 밖. 1초에 2°C 넘는 점프는 스파이크로 버리고 연속 3회면 수용.</li>
+  <li><b>온도 계산</b>: 측정저항 <code>raw·RREF/32768</code> → 선형 보정 <code>gain·R + offset</code> → PT100 Callendar–Van Dusen 역산(뉴턴법). 보정은 NVS <code>tcal</code>(16장).</li>
 </ul>
 
 <h3><code>WifiManager</code> — 네트워크</h3>
-<p>AP+STA 동시 모드. AP <code>http://192.168.4.1</code>, mDNS <code>http://europrocessor.local</code>, AP DNS(captive). STA 자동 재연결 이벤트 처리. 설정은 Preferences <code>wifi</code> 네임스페이스에 영구 저장.</p>
+<p>홈 WiFi(STA) 미설정이면 AP 단독, 설정 시 AP+STA. 보드 번호에 따라 이름·AP 대역이 정해진다(14장). STA 재연결은 30초→최대 5분 백오프(코어 자동재연결 OFF — 즉시 재시도는 채널 스캔으로 AP 통신을 끊음). WiFi 절전 OFF. 설정은 Preferences <code>wifi</code>에 영구 저장.</p>
 
 <h3><code>WebServer</code> — HTTP</h3>
-<p>ESPAsyncWebServer 기반. HTML은 <code>web_assets.h</code>에 PROGMEM 임베드. 의존성(motion/recipe/temp/cmd/wifi/saver)을 <code>begin()</code>에서 주입받아 소유하지 않는다. 대용량 JSON(<code>/api/start</code>, 레시피 저장)은 청크 분할 수신 + reserve로 힙 단편화를 억제. 화면보호기 업로드는 파일핸들(<code>_upFile</code>)을 한 번 열고 청크마다 write만 한다.</p>
+<p>ESPAsyncWebServer 기반. HTML은 <code>web_assets.h</code>에 PROGMEM 임베드. 의존성(motion/recipe/temp/cmd/wifi/saver)을 <code>begin()</code>에서 주입받아 소유하지 않는다. <code>/api/start</code>는 요청별 버퍼(<code>_tempObject</code>)로 여러 기기가 동시에 보내도 본문이 섞이지 않는다. 레시피 저장은 동시 저장 차단·64KB 상한·쓰기 실패 감지·<b>커밋 전 JSON 검증</b>. 화면보호기 업로드는 파일핸들(<code>_upFile</code>)을 한 번 열고 청크마다 write만 한다.</p>
+<div class="crit"><b>운전 중 차단 (<code>motorBusy()</code>).</b> 모터 회전·감속 중이거나 레시피 진행(일시정지·확인대기 포함) 중이면 플래시 쓰기·재부팅이 따르는 요청 — 설정 저장, 레시피 저장, 화면보호기 업로드/삭제, OTA, 온도 보정 — 은 모두 <b>409</b>. 웹은 레시피 편집을 "저장 대기"로 미뤘다가 정지 후 자동 저장한다.</div>
 
 <h3><code>DisplayUI</code> — 물리 UI</h3>
 <p>ST7789 320×240 + EC11 인코더 + KO 버튼. U8g2로 한글 UTF-8 폰트 출력. 캐시 기반 부분 렌더링으로 깜빡임 제거. <code>initTft</code>에서 <b><code>invertDisplay(false)</code>로 패널 색반전 보정</b>(이 패널은 INVON이 색을 네거티브로 반전). <code>ISaver</code>를 구현해 웹에서 화면보호기 설정을 읽고 쓴다.</p>
-<p>페이지: STATUS / 레시피경고 / 수동메뉴 / 속도·주기·화면보호기시간 편집 / 정보 / 화면보호기. (자세한 화면보호기 동작은 <a href="#saver">8장</a>)</p>
+<p>페이지: STATUS / 메뉴 / 레시피 탐색·시작 / 실행 제어 / 수동 / 설정 / 편집 / 정보(MAC·핀 프로필 표시) / 화면보호기. (자세한 화면보호기 동작은 <a href="#saver">8장</a>)</p>
+<ul>
+  <li><b>입력 노이즈 감시</b>: 500ms 창에서 인코더 ISR 수·A/B 동시변화·버튼 순간 펄스를 세어 임계 초과 시 패널 입력 3초 차단(인코더 인터럽트 OFF), 모드 칩 <code>NOISE</code>. 한 방향 순이동 ≥2디텐트면 손조작으로 보고 면제. 10초마다 <code>[Noise] peak</code> 로그(임계값 보정용).</li>
+  <li><b>설정 저장 지연</b>: 화면보호기 설정의 NVS 쓰기는 모터 정지·레시피 비활성일 때 수행(값은 즉시 반영).</li>
+</ul>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -323,7 +360,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>STOP_FWD / STOP_REV</code></td><td>해당 방향 감속 → REST</td></tr>
 <tr><td><code>REST</code></td><td>방향전환 휴지 — EN=HIGH (코일 전류 차단, 관성 안정 + 발열 억제), <code>REST_MS=2000</code></td></tr>
 <tr><td><code>STOP_RECIPE</code></td><td>레시피 단계 종료 감속 → <code>waitConfirm</code></td></tr>
-<tr><td><code>STOP_SAFE</code></td><td>안전 정지 감속 → IDLE (다음 사이클 없음)</td></tr>
+<tr><td><code>STOP_SAFE</code></td><td>감속 → IDLE (다음 사이클 없음). 안전정지·일시정지·단계 이동/건너뛰기가 공유</td></tr>
 </table>
 <div class="note"><b>cycle 플래그.</b> <code>setCycle(false)</code>면 한 방향 구동 후 자동 방향전환을 하지 않는다. 수동 운전에서 단방향 회전이 필요할 때 사용.</div>
 </section>
@@ -340,8 +377,8 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
           <span class="a">→</span> takeStepStopped() <span class="a">→</span> waitConfirm <span class="a">→</span> confirm() <span class="a">→</span> 다음 단계</code></pre>
 <ul>
   <li><b>waitConfirm</b> — 단계 사이에 약품 교체를 위해 사용자 확인을 기다린다. 웹 <code>/api/confirm</code> 또는 디스플레이 OK.</li>
-  <li><b>skipStep</b> — 확인대기 여부와 무관하게 현재 단계를 건너뛰고 다음으로.</li>
-  <li><b>pauseToggle</b> — 진행 중 일시정지/재개. 경과시간 보정.</li>
+  <li><b>skipStep / gotoStep</b> — 확인대기 여부와 무관하게 다음 단계(또는 지정 단계)로. <b>감속 정지 완료 후</b> 목표 단계를 처음부터 가속 시작(<code>_pendingStep</code>). 웹 상태 탭 진행도 바에서 단계를 누르면 확인창 → <code>/api/goto</code>.</li>
+  <li><b>pauseToggle</b> — 진행 중 일시정지(감속 정지)/재개. 경과시간 보정. 단계 전환 대기 중에는 무시.</li>
 </ul>
 </section>
 
@@ -383,23 +420,32 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <!-- ───────────────────────────── -->
 <section id="crash">
 <h2><span class="n">9</span>크래시 분석 &amp; 방지</h2>
-<div class="crit"><b>증상.</b> 모터 회전 중 화면보호기 진입·이미지 업로드·삭제 시 간헐적 <code>Guru Meditation Error: Cache disabled but cached memory region accessed</code> (Core 1 panic, reset reason 4). 처음엔 브라운아웃으로 오진했으나 WiFi 미사용 중에도 발생 → panic 확정.</p></div>
+<div class="crit"><b>증상.</b> 모터 회전 중 화면보호기 진입·이미지 업로드·삭제 시 간헐적 <code>Guru Meditation Error: Cache disabled but cached memory region accessed</code> (Core 1 panic, reset reason 4). 처음엔 브라운아웃으로 오진했으나 WiFi 미사용 중에도 발생 → panic 확정. 근본 원인은 아래(v4.6.3에서 확정).</div>
 
-<h3>근본 원인</h3>
-<p>LittleFS 읽기/쓰기·WiFi NVS 같은 <b>플래시 연산은 순간 캐시를 끈다</b>. 그 창에 ISR이나 코드가 플래시 영역(<code>.rodata</code>, 플래시 상주 함수)을 건드리면 패닉한다. 여기서는 <b>모터 EMI로 유발된 인코더 GPIO 인터럽트</b>가 그 트리거였다.</p>
-<pre><code><span class="c">충돌 시나리오</span>
-모터 회전 → EMI → 인코더 핀 엣지 → encISR 발생
-          ↘ 그 순간 화면보호기 loadAnim()이 LittleFS read 중 (캐시 OFF)
-          → ISR/디스패처가 플래시 접근 → Cache disabled panic</code></pre>
+<h3>근본 원인 (v4.6.3, UART 백트레이스로 확정)</h3>
+<p>LittleFS 읽기/쓰기·NVS 같은 <b>플래시 연산은 순간 캐시를 끈다</b>. 캐시가 꺼진 동안에는 플래시뿐 아니라 <b>PSRAM도 읽을 수 없다</b>. 그 창에 IRAM ISR이 PSRAM에 있는 데이터를 읽으면 패닉한다.</p>
+<pre><code><span class="c">백트레이스 (2026-10-04, UART0 TTL 캡처)</span>
+Guru Meditation Error: Core 1 panic'ed (Cache disabled but cached memory region accessed)
+spi_flash_op_block_func → shared_intr_isr → <span class="k">pcnt_intr_service</span>
+레지스터 A2 = 0x3d800908 (<span class="k">PSRAM</span>) = p_pcnt_obj,  A8 = 0xbad00bad (캐시 OFF 읽기 표식)
+
+<span class="c">충돌 시나리오</span>
+모터 회전 → FastAccelStepper(MCPWM/PCNT) PCNT ISR 계속 발생 (IRAM, Core 1)
+          ↘ 그 순간 Core 0이 /recipes.json 읽기 (TFT "Run recipe" 진입 등, 캐시 OFF)
+          → ISR이 PSRAM의 p_pcnt_obj 읽음 → Cache disabled panic (reset 4)</code></pre>
+<p>IDF 4.4 pcnt 드라이버가 <code>p_pcnt_obj</code>를 <code>heap_caps_calloc(MALLOC_CAP_DEFAULT)</code>로 할당하는데, 이 방식은 "4KB 미만은 내부 RAM" 규칙이 적용되지 않아 PSRAM에 놓일 수 있다. 예전에 "모터 EMI로 생긴 인코더 인터럽트"로 진단했던 증상도 실제로는 이 버그였을 가능성이 높다.</p>
 
 <h3>적용한 방어</h3>
 <table>
 <tr><th>계층</th><th>조치</th></tr>
-<tr><td>ISR IRAM-safe화</td><td><code>encISR</code>이 <code>REG_READ(GPIO_IN_REG)</code> 직접 읽기 + <code>DRAM_ATTR</code> 디코드 테이블 사용 (플래시 함수·<code>.rodata</code> 회피)</td></tr>
-<tr><td><b>플래시op 게이팅</b><br>(최종 차단)</td><td>모터 <b>비-IDLE이면 모든 플래시 연산 금지</b>:<br>· 화면보호기 진입/렌더 안 함 (loadAnim 차단)<br>· 업로드 시작 거부 + <b>진행 중 모터 기동 시 중단·부분파일 삭제</b><br>· 삭제 409 응답</td></tr>
+<tr><td><b>근본 수정</b><br>(v4.6.3)</td><td><code>MotionController::begin()</code>이 FastAccelStepper 초기화 동안 PSRAM 여유 블록을 전부 점유 → pcnt 객체가 내부 RAM에 할당. 부팅 로그 <code>[Stepper] … DEFAULT 할당 위치: 내부 RAM (정상)</code>. 부수 효과로 모터 소음도 줄었다(PCNT ISR의 PSRAM 접근 지연 제거 추정).</td></tr>
+<tr><td>ISR IRAM-safe화</td><td><code>encISR</code>이 <code>REG_READ(GPIO_IN_REG)</code> 직접 읽기 + <code>DRAM_ATTR</code> 디코드 테이블·핀 사본 사용 (플래시 함수·<code>.rodata</code> 회피)</td></tr>
+<tr><td><b>운전 중 플래시 쓰기 금지</b></td><td><code>motorBusy()</code>면 플래시 쓰기·재부팅 요청 409, NVS 쓰기 지연. 크래시가 아니더라도 플래시 소거(수십 ms) 동안 모터 펄스 큐 보충이 멈춰 덜컹일 수 있기 때문.</td></tr>
+<tr><td>화면보호기 게이팅</td><td>모터 비-IDLE이면 화면보호기 진입·렌더 안 함, 업로드 진행 중 모터 기동 시 중단·부분파일 삭제</td></tr>
 </table>
 <div class="note"><b>왜 PCNT 인코더로 안 바꿨나.</b> 하드웨어 PCNT 카운터로 옮기면 ISR 자체를 없앨 수 있지만, FastAccelStepper가 ESP32-S3 스텝 생성에 PCNT(MCPWM_PCNT)를 점유한다. 인코더용 PCNT가 모터와 충돌해 <b>둘 다 깨졌다</b> → 인터럽트 인코더 유지 + 게이팅으로 결론.</div>
-<div class="warn"><b>새 ISR/플래시op 추가 시 원칙.</b> ① ISR은 IRAM-safe(<code>IRAM_ATTR</code> 함수 + <code>DRAM_ATTR</code> 데이터 + 레지스터 직접 접근). ② LittleFS/NVS 등 플래시op는 <b>모터 IDLE일 때만</b> 수행.</div>
+<div class="warn"><b>새 ISR/플래시op 추가 시 원칙.</b> ① ISR은 IRAM-safe(<code>IRAM_ATTR</code> 함수 + <code>DRAM_ATTR</code> 데이터 + 레지스터 직접 접근, <code>pins()</code> 같은 플래시 함수 호출 금지). ② IRAM ISR이 쓰는 드라이버 객체가 PSRAM에 놓이지 않는지 확인. ③ LittleFS/NVS 쓰기는 <b>모터 IDLE·레시피 비활성일 때만</b>.</div>
+<div class="note"><b>크래시 로그 받는 법.</b> 패닉 출력은 UART0(GPIO43 TX/44 RX)과 USB 양쪽으로 나간다. USB 시리얼은 <b>포트를 닫으면 보드가 리셋</b>되므로, USB-TTL 어댑터를 TX/RX/GND만 연결(VCC 연결 금지, 3.3V 레벨)해 DTR/RTS를 끈 채 녹화하는 게 안전하다. 백트레이스는 같은 버전의 <code>firmware.elf</code>로 <code>xtensa-esp32s3-elf-addr2line -pfiaC -e firmware.elf 주소…</code>. 코어덤프 파티션은 없다(파티션 변경 시 LittleFS가 지워지므로 보류).</div>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -417,9 +463,24 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/settings</code></td><td>WiFi 설정 조회/저장 (저장 시 재부팅)</td></tr>
 <tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/recipes/load</code> · <code>/save</code></td><td>레시피 JSON 불러오기/저장 (LittleFS, 원자적 교체)</td></tr>
 <tr><td><span class="pill m-get">GET</span> <span class="pill m-post">POST</span></td><td><code>/api/saver/settings</code></td><td>화면보호기 활성/타임아웃</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/skip</code> · <code>/api/safestop</code></td><td>단계 건너뛰기 / 감속 정지 (둘 다 감속 후 동작). <code>/api/safestop</code>은 큐가 가득 차면 503 → 웹이 재시도</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/goto</code></td><td><code>{"step":N}</code> 지정 단계로 이동 (레시피 없으면 409)</td></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/api/recipe</code></td><td>실행 중 레시피 단계 목록(이름·시간·RPM) — 모든 클라이언트가 같은 진행도 바</td></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/multi</code></td><td>멀티 보드 제어 페이지 (14장)</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/ota</code></td><td>펌웨어 업로드(<code>X-OTA</code> 헤더 필수). 사양 불일치·운전 중·동시 업로드 거부 (15장)</td></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/api/wifi/scan</code></td><td>주변 WiFi 비동기 검색. 진행 중이면 <code>{"scanning":true}</code>, 15초 캐시(<code>?refresh=1</code> 강제), 같은 SSID 병합·신호순</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/temp/cal</code></td><td>온도 보정 <code>{"gain","offset"}</code> 또는 <code>{"reset":true}</code> (16장)</td></tr>
 <tr><td><span class="pill m-post">POST</span> <span class="pill m-del">DELETE</span></td><td><code>/api/saver/image</code></td><td>화면보호기 업로드(매직바이트로 JPEG/GIF/<code>ANM1</code> 판정 → <code>/saver.{jpg,gif,anim}</code>)/삭제. <b>모터 운전 중 차단</b>(업로드 거부·진행 중 중단, 삭제 409 — 플래시op 크래시 회피)</td></tr>
 </table>
-<p><code>/api/status</code>의 JSON 키와 HTML은 마이그레이션 전후로 동일하여 프론트엔드는 변경 없이 동작한다.</p>
+<h3><code>/api/status</code> 주요 키</h3>
+<table>
+<tr><th>분류</th><th>키</th></tr>
+<tr><td>모터·레시피</td><td><code>motorRpm motorDir manualMode recipeRun recipePause waitConfirm recipeName stepIdx totalSteps stepName stepNext stepDurSec stepRemSec</code></td></tr>
+<tr><td>보드</td><td><code>fw variant name boardId mac pinProfile upSec</code></td></tr>
+<tr><td>진단</td><td><code>heapFree heapMin heapMax guard resetReason rssi apClients staConn staIP</code></td></tr>
+<tr><td>온도</td><td><code>temperature tempFault tempFaultCode rtdWires rtdOhm calGain calOffset</code></td></tr>
+</table>
+<div class="note"><b>폴링 규칙(웹).</b> 상태 요청은 동시 1건·응답 후 500ms 뒤 다음 요청·2초 타임아웃·백그라운드 탭 중지(요청 적체로 명령이 밀리던 문제 해결). 정지류 명령은 1.5초 타임아웃 × 최대 5회 재시도, 끝내 실패하면 경고창. 외부 페이지의 CSRF는 OTA만 커스텀 헤더로 차단 — 웹 인증은 없다.</div>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -435,33 +496,45 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>Cfg::RAMP_SEC</code></td><td>2.0</td><td>0→설정RPM 도달 시간(가속·감속). 목표속도 기준 per-run 계산</td></tr>
 <tr><td><code>Cfg::SCURVE_HANDOVER</code></td><td>0.5</td><td>S-커브 저크제한 구간 비율(목표속도의 f까지 소프트스타트)</td></tr>
 <tr><td><code>Cfg::REST_MS</code></td><td>2000</td><td>방향전환 휴지 (관성 안정 + TMC 열관리)</td></tr>
-<tr><td><code>Cfg::TEMP_SENSOR_PRESENT</code></td><td><b>false</b></td><td>온도센서 활성. false면 init·태스크 미생성 (현재 보드 불량 격리)</td></tr>
 <tr><td><code>Cfg::RREF</code> / <code>RNOMINAL</code></td><td>412 / 100 Ω</td><td>MAX31865 기준저항 / PT100 공칭</td></tr>
 <tr><td><code>Cfg::TEMP_FAULT_CLEAR_AFTER</code></td><td>5</td><td>연속 fault N회 후만 clear</td></tr>
-<tr><td><code>Cfg::RTD_WIRES</code></td><td>2 / 3 / 4</td><td>RTD 결선 모드 — <b>보드 솔더점퍼와 일치 필수</b></td></tr>
 <tr><td><code>Cfg::TEMP_UNREAD</code></td><td>-999.0</td><td>미독취 센티넬</td></tr>
+<tr><td><code>Cfg::TEMP_MAX_STEP_C</code> / <code>TEMP_SPIKE_ACCEPT_AFTER</code></td><td>2.0 / 3</td><td>1초 점프 상한 / 연속 N회면 실제 변화로 수용</td></tr>
+<tr><td><code>Cfg::TEMP_MIN_VALID_C</code> / <code>TEMP_MAX_VALID_C</code></td><td>-20 / 100</td><td>유효 온도 범위 — 밖이면 fault 0x02</td></tr>
+<tr><td><code>Cfg::NOISE_WIN_MS</code></td><td>500</td><td>입력 노이즈 판정 창</td></tr>
+<tr><td><code>Cfg::NOISE_ENC_EDGE_MAX</code> / <code>NOISE_ENC_BAD_MAX</code></td><td>2000 / 60</td><td>인코더 ISR 폭주 상한 / A·B 동시변화(손조작이 아닐 때만)</td></tr>
+<tr><td><code>Cfg::NOISE_ENC_HUMAN_NET</code></td><td>8</td><td>한 방향 순이동 전이 수 ≥ 이 값이면 손조작으로 면제</td></tr>
+<tr><td><code>Cfg::NOISE_BTN_GLITCH_MAX</code> / <code>INPUT_BLOCK_MS</code></td><td>3 / 3000</td><td>버튼 순간 펄스 상한 / 패널 입력 차단 시간</td></tr>
+<tr><td><code>Cfg::NOISE_ESCALATE_BURSTS</code> / <code>_WIN_MS</code></td><td>3 / 60000</td><td>창 안에 버스트 N회 → 모터 정지</td></tr>
+<tr><td><code>Cfg::GUARD_BAD_RESETS</code> / <code>GUARD_STABLE_MS</code></td><td>3 / 60000</td><td>연속 비정상 리셋 N회 → 모터 잠금 / 정상 가동 시 카운터 리셋</td></tr>
+<tr><td><code>Cfg::MAX_JSON_BODY</code> / <code>MAX_RECIPES_BODY</code></td><td>16KB / 64KB</td><td>웹 본문 상한 (힙 보호)</td></tr>
+<tr><td><code>Cfg::FW_VERSION</code></td><td>"v4.8.1"</td><td>펌웨어 버전 (웹·TFT·로그)</td></tr>
 </table>
+<p>핀·<code>hasDisplay</code>·<code>rtdWires</code>는 <code>PinMap.h</code>(3장), 칩 사양 태그 <code>FW_VARIANT</code>는 <code>platformio.ini</code>(15장).</p>
 </section>
 
 <!-- ───────────────────────────── -->
 <section id="build">
 <h2><span class="n">12</span>빌드 &amp; 플래시 (PlatformIO)</h2>
-<pre><code>pio run                 <span class="c"># 빌드</span>
-pio run -t upload       <span class="c"># 펌웨어 업로드</span>
-pio device monitor      <span class="c"># 시리얼 모니터 (115200)</span></code></pre>
+<pre><code>pio run -e esp32-s3-devkitc-1 -e n8r2            <span class="c"># 두 사양 모두 빌드</span>
+pio run -e n8r2 -t upload --upload-port COMx     <span class="c"># USB 업로드 (최초 1회·파티션 변경 시)</span>
+pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모니터 — DTR/RTS 끄기 (닫을 때 리셋 방지)</span></code></pre>
 <ul>
-  <li><code>data/</code> 폴더가 없으므로 <code>uploadfs</code>는 불필요 (레시피·화면보호기는 런타임 생성).</li>
-  <li>시리얼 로그가 안 보이면 보드 <span class="kbd">EN/RESET</span>을 한 번 누른다 (USB-CDC 재연결 타이밍).</li>
+  <li>평소 업데이트는 <b>웹 OTA</b>(15장). <code>.pio/build/&lt;환경&gt;/firmware.bin</code>을 올린다.</li>
+  <li><code>data/</code> 폴더가 없으므로 <code>uploadfs</code>는 불필요 (레시피·화면보호기는 런타임 생성). <b>uploadfs를 하면 레시피가 지워진다.</b></li>
+  <li>USB 업로드 직후 자동 리셋이 실패하면 <span class="kbd">RESET</span>을 누른다. 부팅 로그는 USB 재연결 타이밍 때문에 놓치기 쉽다.</li>
+  <li><code>firmware/</code>(OTA용 사본)·<code>backups/</code>(보드 플래시·레시피 백업)는 git 제외.</li>
 </ul>
 <h3>빌드 플래그</h3>
 <table>
 <tr><th>플래그</th><th>의미</th></tr>
-<tr><td><code>UI_DISPLAY_PRESENT=1</code></td><td>디스플레이 결선 여부. <code>0</code>이면 <code>displayTask</code> 미생성(무디스플레이 변종)</td></tr>
-<tr><td><code>BOARD_HAS_PSRAM</code> + <code>memory_type=qio_opi</code></td><td>N16R8 OPI PSRAM 활성</td></tr>
+<tr><td><code>UI_DISPLAY_PRESENT=1</code></td><td>화면 코드 포함 여부. 보드별 화면 유무는 <code>PinMap.h</code> <code>hasDisplay</code>로 런타임 결정</td></tr>
+<tr><td><code>FW_VARIANT</code></td><td>칩 사양 태그(<code>N16R8</code>/<code>N8R2</code>) — 웹·로그 표시</td></tr>
+<tr><td><code>BOARD_HAS_PSRAM</code> + <code>memory_type</code></td><td><code>qio_opi</code>(N16R8 Octal) / <code>qio_qspi</code>(N8R2 Quad)</td></tr>
 <tr><td><code>ARDUINO_USB_CDC_ON_BOOT=1</code></td><td>네이티브 USB 포트로 Serial 출력</td></tr>
 <tr><td><code>CORE_DEBUG_LEVEL=0</code></td><td>코어 로그 억제 (디버깅 시 3)</td></tr>
 </table>
-<div class="note"><b>버전 고정.</b> <code>platform espressif32 @ 7.0.1</code> + <code>lib_deps</code> 전부 버전 핀(2026-06-12 검증). Arduino-ESP32 2.0.17 / IDF 4.4 — 레거시 드라이버만 존재(<code>driver/pulse_cnt.h</code> 없음). 업그레이드 시 버전만 올리고 <code>pio run</code> 재검증. <code>partitions.csv</code> = 3MB APP ×2 (OTA) + 9.9MB LittleFS.</div>
+<div class="note"><b>버전 고정.</b> <code>platform espressif32 @ 7.0.1</code> + <code>lib_deps</code> 전부 버전 핀(2026-06-12 검증). Arduino-ESP32 2.0.17 / IDF 4.4 — 레거시 드라이버만 존재(<code>driver/pulse_cnt.h</code> 없음). 업그레이드 시 버전만 올리고 <code>pio run</code> 재검증. <code>partitions.csv</code> = 3MB APP ×2 (OTA) + 9.9MB LittleFS (16MB), <code>partitions_8MB.csv</code> = 3MB APP ×2 + 1.9MB LittleFS (8MB).</div>
 <h3>도구</h3>
 <p><code>tools/gen_nyan.py</code> — GIF → RGB565 프레임 헤더(<code>src/nyan_frames.h</code>) 생성. LANCZOS 160×120 리사이즈, 프레임/딜레이 자동 추출. <code>python -m pip install Pillow</code> 필요.</p>
 </section>
@@ -473,29 +546,103 @@ pio device monitor      <span class="c"># 시리얼 모니터 (115200)</span></c
   <li><b>부팅 즉시 TMC2209 EN=HIGH</b> — 리셋~setup 구간 floating으로 코일이 통전된 채 정지하면 발열/소손. 권장 HW 풀업: EN→3.3V 10K.</li>
   <li><b>부팅 즉시 패널 신호 핀 idle 고정</b> — floating noise가 패널 컨트롤러를 비정상 state로 몰아 ESD/latch-up 손상 누적 방지. 권장 HW 풀업: TFT CS·RST→3.3V 10K.</li>
   <li><b>디스플레이 배선 주의</b> — 신호선을 5V(VBUS) 근처로 라우팅하지 말 것. 5V가 신호핀에 닿으면 내부 ESD 다이오드를 통해 VCC 레일로 역주입되어 컨트롤러/백라이트가 손상될 수 있음 (실손상 사례 있음).</li>
-  <li><b>탈조 방지</b> — 모든 시작/정지/방향전환은 <code>AccelStepper</code> 가속도 곡선 경유. 비상정지(<code>stopImmediate</code>)만 즉시 정지.</li>
+  <li><b>탈조·충격 방지</b> — 모든 시작/정지/방향전환과 <b>일시정지·단계 이동·건너뛰기</b>는 S-커브 감속 경유. 비상정지(<code>stopImmediate</code>)만 즉시 정지. 비상정지 시 큐·대기 레시피를 폐기해 정지 직후 재기동 방지.</li>
+  <li><b>노이즈 가드</b> — 인코더/버튼 노이즈 버스트 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋(브라운아웃·패닉·WDT) 3회 → 모터 잠금(전원 재투입 해제), 웹·TFT에 <code>LOCKED</code>.</li>
+  <li><b>운전 중 플래시 쓰기·재부팅 금지</b> — 9장·10장.</li>
   <li><b>냉각</b> — 75RPM 연속 2h+ 시 모터·전자부 ≈50°C(실측). 발열은 I²R 지배 → VREF 최소 유지 정책.</li>
+  <li><b>전원</b> — 소비는 1A 미만(추정)이라 20V 1.5A 이상이면 충분. 20V 라인에 퓨즈(1.5~2A), 드라이버 VM 근처 100~470µF, 5V 레귤레이터 출력에 쇼트키 다이오드(USB 5V가 레귤레이터를 거쳐 20V 라인으로 역류하는 것 방지) 권장. <b>USB만 꽂은 채 모터를 돌리지 말 것</b>, 전원 켠 채 모터 커넥터 탈착 금지.</li>
 </ul>
 </section>
 
 <!-- ───────────────────────────── -->
+<section id="multi">
+<h2><span class="n">14</span>멀티 보드 &amp; 네트워크</h2>
+<h3>보드 번호 (웹 설정, 1~9)</h3>
+<table>
+<tr><th>보드 번호</th><th>이름 (mDNS)</th><th>AP 주소</th></tr>
+<tr><td>1</td><td><code>europrocessor.local</code></td><td><code>192.168.4.1</code> (기존 호환)</td></tr>
+<tr><td>2</td><td><code>europrocessor2.local</code></td><td><code>192.168.5.1</code></td></tr>
+<tr><td>N</td><td><code>europrocessorN.local</code></td><td><code>192.168.(3+N).1</code></td></tr>
+</table>
+<p>AP 대역을 나눈 이유: 다른 보드의 AP에 STA로 붙을 때 자기 AP와 같은 대역이면 라우팅이 깨진다. AP 최대 동시 접속은 10(폰 여러 대 + 다른 보드가 함께 사용).</p>
+<h3>집 WiFi 없이 여러 대 운용</h3>
+<pre><code>폰 ──WiFi──► 바디2 AP (192.168.5.1)  ◄──STA── 바디1 (고정 IP 192.168.5.11)
+             └ http://192.168.5.1/multi  →  두 보드 API를 브라우저가 직접 호출</code></pre>
+<ol class="body">
+  <li>각 보드에 서로 다른 보드 번호 지정.</li>
+  <li>나머지 보드의 설정 → 집 WiFi에 기준 보드 AP 이름·비밀번호 입력(검색 버튼으로 선택 가능), 고정 IP(예: .11, .12)와 게이트웨이(기준 보드 AP 주소).</li>
+  <li>폰은 기준 보드 AP에만 접속 → <code>/multi</code> → 보드 IP 추가(폰 브라우저에 저장).</li>
+</ol>
+<p><code>/multi</code>: 보드별 상태(이름·번호·IP·펌웨어·RSSI·RPM·방향·모드·레시피 진행)·정지·일시정지/재개·다음 단계·열기, 상단 <b>전체 정지</b>, 레시피 선택 후 체크한 보드에서 동시 시작. 보드 간 통신은 없어서 한 대가 꺼져도 나머지는 계속 동작한다. 레시피 타이밍은 각 보드가 자체로 재므로 시작 시각 차이(수십 ms)는 결과에 영향 없다.</p>
+<h3>WiFi 검색 / 진단</h3>
+<ul>
+  <li>설정 → 집 WiFi 이름 옆 <b>검색</b>: 2~4초 비동기 검색, 신호 막대·dBm·채널·개방망 표시, 고르면 이름 칸 자동 입력. 검색 중 AP 클라이언트 통신이 잠깐 느려질 수 있다.</li>
+  <li>디바이스 정보·멀티 카드에 <b>RSSI</b>(STA 수신 세기) 표시 — 배치 비교용.</li>
+</ul>
+<div class="warn"><b>실측 사례 (바디1).</b> 같은 펌웨어인데 바디1만 큰 응답이 8초 타임아웃·ping 손실 15%, WiFi 검색에서 같은 AP를 약 15dB 약하게 수신. 강한 신호(-37dBm)에서만 정상 → 수신 감도 저하(안테나 가림·-1U 외부안테나 누락·전원 노이즈 의심). 임시로 바디2 AP에 STA로 붙여 운용.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="ota">
+<h2><span class="n">15</span>OTA &amp; 보드 사양</h2>
+<table>
+<tr><th>빌드 환경</th><th>칩</th><th>파티션</th><th>대상</th></tr>
+<tr><td><code>esp32-s3-devkitc-1</code></td><td>N16R8 (16MB / 8MB Octal PSRAM)</td><td><code>partitions.csv</code></td><td>바디1</td></tr>
+<tr><td><code>n8r2</code></td><td>N8R2 (8MB / 2MB Quad PSRAM)</td><td><code>partitions_8MB.csv</code></td><td>바디2</td></tr>
+</table>
+<p>플래시 용량·PSRAM 종류는 빌드 타임 설정이라 사양마다 바이너리가 다르다. 핀·화면·온도센서는 런타임(<code>PinMap.h</code>)이라 같은 사양 안에서는 <code>.bin</code> 하나로 모든 보드를 지원한다.</p>
+<h3>웹 OTA</h3>
+<ol class="body">
+  <li>웹 설정 → <b>펌웨어 업데이트</b> → <code>firmware.bin</code> 선택 → 업로드(진행률 표시) → 자동 재부팅. 레시피·설정 유지.</li>
+  <li>거부 조건: <code>X-OTA</code> 헤더 없음(외부 페이지 CSRF 차단) · 모터/레시피 동작 중 · 다른 기기가 업로드 중(10초 무응답이면 끊긴 업로드로 정리) · <b>이미지 헤더의 플래시 용량이 보드와 다름</b>(<code>wrong board variant</code>).</li>
+  <li><b>자동 롤백</b>: OTA 성공 시 NVS <code>ota/pending</code> 표시. 새 펌웨어가 연속 비정상 리셋 3회(가드 잠금)면 이전 파티션으로 되돌리고, 60초 정상 가동(모터 정지 상태)하면 확정한다. 펌웨어는 살아 있지만 WiFi가 안 뜨는 경우는 롤백되지 않으므로 USB로 복구.</li>
+</ol>
+<div class="note"><b>구형 보드 이전 (바디2 사례).</b> v2.2(Arduino 기본 파티션, 앱 1.25MB)는 v4.x(약 1.5MB)가 들어가지 않아 OTA 불가 → ① <code>esptool read_flash</code>로 8MB 전체 백업 + <code>verify_flash</code> 대조, ② 백업에서 LittleFS의 최신 <code>recipes.json</code> 추출, ③ <code>pio run -e n8r2 -t upload</code>(파티션 표 교체), ④ 웹으로 레시피 복원. 백업은 <code>backups/</code>.</div>
+</section>
+
+<!-- ───────────────────────────── -->
+<section id="tcal">
+<h2><span class="n">16</span>온도 보정</h2>
+<p>측정저항에 직선 보정을 건다: <code>R_cal = gain · R_meas + offset(Ω)</code> → PT100 표준식으로 온도 계산. RREF 오차·PT100 공차·2선식 리드선 저항(오프셋)·보드 결선 왜곡(기울기)을 함께 흡수한다. 값은 보드별 NVS <code>tcal</code>, 허용 범위 gain 0.85~1.15 / offset ±20Ω.</p>
+<h3>웹 절차 (설정 → 온도 보정)</h3>
+<ol class="body">
+  <li>센서와 <b>기준 온도계</b>를 같은 물에 나란히 5cm 이상 담그고 저으면서 1~2분 안정.</li>
+  <li>기준 온도 입력 → <b>[점 기록]</b> (5초 평균, 0.2°C 이상 흔들리면 거부).</li>
+  <li>두 번째 점(10°C 이상 차이) 기록 → <b>[보정 저장]</b> → gain/offset 확인창. 1점만 기록하면 오프셋만 보정.</li>
+  <li>권장 점: <b>0°C 얼음물</b>(잘게 부순 얼음 가득 + 물 조금, 2~3분) + <b>작업 온도 38°C</b>. C-41(±0.15°C)은 기준 온도계 정확도가 결과를 좌우한다.</li>
+</ol>
+<p>기록 중인 점은 브라우저에 보관(새로고침 유지). [마지막 점 삭제]·[점 지우기]·[보정 초기화]. 실패 시 사유 표시.</p>
+<div class="warn"><b>보정이 유효한 조건.</b> 센서·케이블·단자·보드 점퍼를 바꾸지 않을 것. 단자 접촉 저항 0.1Ω 변화 = 약 0.26°C. 센서 내부로 물이 스며든 누설은 시간에 따라 변해서 보정이 유지되지 않는다 — 보정 전에 선과 프로브 외피 사이 절연(MΩ 이상)을 확인.</div>
+<div class="note"><b>실측 사례 (바디2, 미해결).</b> 3선 결선 + 2선 모드에서 얼음물은 -0.44°C로 맞지만 31~38°C에서 2.5~3°C 낮음(기울기 -7.6%). 3선 모드는 RTD=0(fault 0x41). 보드 점퍼(3선)↔펌웨어(2선) 불일치·누설·비표준 센서 중 무엇인지 멀티미터로 확인 후 보정 예정(<code>ISSUES.md</code> F8).</div>
+</section>
+
+<!-- ───────────────────────────── -->
 <section id="trouble">
-<h2><span class="n">14</span>트러블슈팅</h2>
+<h2><span class="n">17</span>트러블슈팅</h2>
 <table>
 <tr><th>증상</th><th>원인 / 조치</th></tr>
 <tr><td>화면 색이 네거티브(빨강→시안)</td><td>패널 INVON. <code>initTft()</code>의 <code>invertDisplay(false)</code> 유지 — 제거 금지.</td></tr>
-<tr><td>온도 항상 fault / <code>raw=0x7FFF</code> 미통신, <code>-242°C raw=0x0000</code></td><td>SPI 라운드트립은 정상인데 raw가 안 변하면 <b>아날로그단 사망</b>(현 보드 케이스). <code>TEMP_SENSOR_PRESENT=false</code>로 격리됨.</td></tr>
-<tr><td>FORCE 개방 fault(0x10/0x08)</td><td><code>RTD_WIRES</code> ↔ 보드 솔더점퍼 불일치. 임시로 2로 내려 격리 검증.</td></tr>
-<tr><td>모터 회전 중 화면보호기/업로드/삭제 시 리셋</td><td>「Cache disabled」 panic. 플래시op 게이팅으로 차단됨 — 모터 정지 후 업로드/삭제. (<a href="#crash">9장</a>)</td></tr>
+<tr><td>온도 항상 fault / <code>raw=0x7FFF</code> 미통신, <code>-242°C raw=0x0000</code></td><td>SPI 라운드트립은 정상인데 raw가 안 변하면 <b>아날로그단 사망</b>(바디1 보드). <code>rtdWires=0</code>으로 격리.</td></tr>
+<tr><td>FORCE 개방 fault(0x10/0x08)</td><td><code>rtdWires</code> ↔ 보드 솔더점퍼 불일치. 웹 <code>tempFaultCode</code>로 확인.</td></tr>
+<tr><td>3선 모드에서 fault 0x41 (RTD=0), 2선 모드는 값이 나옴</td><td>보드 3선 점퍼 구조(클론) 또는 결선 의심. 결선 반대로 2선에서도 합선(-241°C, fault 0x02)이면 점퍼가 단자를 엉뚱하게 잇는 것. 16장·<code>ISSUES.md</code> F8.</td></tr>
+<tr><td>온도가 일정 비율로 낮게/높게</td><td>2점 보정(16장). 보정 전 누설 절연 확인.</td></tr>
+<tr><td>reset 4 (패닉) — 모터 운전 중 메뉴·웹 레시피 접근 시</td><td>v4.6.3 이전 PCNT/PSRAM 버그. 최신 펌웨어 사용. 재발하면 UART 녹화로 백트레이스 확보(<a href="#crash">9장</a>).</td></tr>
+<tr><td>USB 모니터를 닫았더니 보드가 재부팅</td><td>USB-Serial-JTAG 동작. <code>--dtr 0 --rts 0</code>로 열거나 UART TTL 사용. 운전 중 USB 분리 금지. 리셋 사유 0은 대개 USB 리셋.</td></tr>
+<tr><td>웹 큰 페이지만 느리거나 8초에 끊김, ping은 정상</td><td>무선 링크 품질. 디바이스 정보 RSSI·WiFi 검색으로 다른 보드와 비교(14장 바디1 사례).</td></tr>
+<tr><td>OTA 실패 <code>wrong board variant</code></td><td>사양이 다른 <code>.bin</code>. N16R8 ↔ N8R2 확인(15장).</td></tr>
+<tr><td>OTA/설정/레시피 저장 409</td><td>모터·레시피 동작 중. 정지 후 재시도 — 레시피 편집은 자동 저장 대기.</td></tr>
+<tr><td>패널 입력이 가끔 안 먹고 화면에 <code>NOISE</code></td><td>입력 노이즈 가드 차단(3초). 정상 조작에서도 뜨면 <code>[Noise] peak</code> 로그로 <code>Config.h</code> 임계값 조정, 인코더 선 꼬임·10nF.</td></tr>
+<tr><td>모터가 안 돌고 <code>LOCKED</code></td><td>연속 비정상 리셋 3회 → 모터 잠금. 전원부 점검 후 전원 재투입.</td></tr>
 <tr><td>인코더 한쪽 방향만 동작 / 모터도 이상</td><td>PCNT 인코더 시도의 잔재. 현재는 인터럽트 인코더 — 이 증상이면 PCNT 코드 혼입 의심.</td></tr>
 <tr><td>벅 컨버터 사망 (5V 없음)</td><td>과부하가 아닌 발열/개체 불량. 입력정격 여유 부품(36V급)으로 교체. 모터(20V 직결)는 영향 없음.</td></tr>
 <tr><td>출력 80RPM 초과 시 탈조</td><td>토크–속도 한계(back-EMF), 코드 결함 아님. 권장 75RPM.</td></tr>
-<tr><td>시리얼 로그 안 보임</td><td>USB-CDC 재연결 타이밍. 보드 EN/RESET 1회.</td></tr>
+<tr><td>시리얼 로그 안 보임</td><td>USB-CDC 재연결 타이밍. 보드 EN/RESET 1회. 상태는 웹 디바이스 정보(메모리·가드·RSSI)로도 확인 가능.</td></tr>
+<tr><td>USB 전원만으로 모터가 약하게 돎</td><td>USB 5V가 레귤레이터를 거꾸로 거쳐 20V 라인에 걸리는 상태. 모터 커넥터를 빼고 작업, 쇼트키 다이오드로 역류 차단(13장).</td></tr>
 </table>
 </section>
 
 <hr>
-<p class="footer">europrocessor 펌웨어 설명서 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · 본 문서는 <code>README.md</code> + 소스 기준으로 생성됨</p>
+<p class="footer">europrocessor 펌웨어 설명서 v4.8.1 · 2026-10-04 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · <code>README.md</code> + 소스 + <code>ISSUES.md</code> 실측 기준</p>
 
 </main>
 </div>
