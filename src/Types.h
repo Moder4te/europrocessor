@@ -32,7 +32,8 @@ enum class CmdType : uint8_t {
     CONFIRM,       // 확인대기 → 다음 단계
     MANUAL,
     SAFE_STOP,     // 가속도 곡선 감속 후 정지
-    SKIP_STEP      // 레시피 진행 중 현재 단계 건너뛰고 다음 단계
+    SKIP_STEP,     // 레시피 진행 중 현재 단계 건너뛰고 다음 단계
+    GOTO_STEP      // 레시피 진행 중 지정 단계(step)로 이동
 };
 struct Cmd {
     CmdType type;
@@ -40,4 +41,5 @@ struct Cmd {
     int     rotSec = 0;
     bool    fwd    = true;
     bool    cycle  = true;
+    int     step   = 0;      // GOTO_STEP 대상 인덱스 (0부터)
 };

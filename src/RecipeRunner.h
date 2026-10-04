@@ -39,6 +39,7 @@ public:
     void pauseToggle();
     void confirm();
     void skipStep();   // 진행 중 현재 단계 건너뛰고 다음 단계로 (확인대기 불문)
+    void gotoStep(int idx);   // 지정 단계로 이동 (범위 밖이면 무시 — skip과 달리 레시피 종료 안 함)
 
     bool running()     const { return _running; }
     bool paused()      const { return _paused; }
@@ -46,9 +47,11 @@ public:
     bool active()      const { return _running || _paused || _waitConfirm; }
 
     RecipeStatus snapshot() const;
+    void copySteps(String& name, std::vector<StepInfo>& out) const;   // 웹 /api/recipe 용 (Core 0)
 
 private:
     void startStep(int idx);
+    void switchTo(int idx);   // 감속 정지 후 idx 단계 시작 (skip/goto)
 
     MotionController& _motion;
     SemaphoreHandle_t _mux = nullptr;
@@ -57,5 +60,6 @@ private:
     String _name;
     int    _stepIdx = 0;
     uint32_t _stepStartMs = 0, _pausedMs = 0;
+    int    _pendingStep = -1;   // 감속 완료 대기 중인 전환 목표 단계 (-1 = 없음)
     std::vector<StepInfo> _steps;
 };

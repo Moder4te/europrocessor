@@ -43,6 +43,7 @@ static RecipeRunner*      s_recipe = nullptr;
 static TemperatureSensor* s_temp   = nullptr;
 static CommandQueue*      s_cmd    = nullptr;
 static RecipeStage*       s_stage  = nullptr;
+static NoiseGuard*        s_guard  = nullptr;
 
 // 색상 (RGB565) — 다크 베이스 + 앰버 단일 액센트
 #define COL_BG      0x0000
@@ -82,12 +83,21 @@ static const DRAM_ATTR int8_t ENC_TABLE[16] = {
 // ★시그니처 void(*)(void*) — IDF gpio_isr_handler_add 콜백 규약★
 // (Arduino attachInterrupt는 shared+non-IRAM 디스패처라 시스템 플래시op 캐시오프 중
 //  인코더 인터럽트가 뜨면 "Cache disabled" 패닉 → IDF IRAM ISR 서비스로 대체)
+// 노이즈 통계 (윈도우마다 displayTask가 읽고 리셋)
+static volatile uint32_t g_encEdges = 0;   // ISR 호출 수
+static volatile uint32_t g_encBad   = 0;   // A·B 동시변화 = 정상 회전으로 불가능한 전이
+static volatile int32_t  g_encNet   = 0;   // 윈도우 내 순이동 (손조작 판별)
+// ※ 무변화(cur==prev)는 세지 않음 — EC11 접점 바운스로 손조작에서도 흔함
 static void IRAM_ATTR encISR(void*) {
     uint32_t in = REG_READ(GPIO_IN_REG);             // GPIO 0~31 입력 (ENC_A=17, ENC_B=16)
-    uint8_t a = (in >> Pin::ENC_A) & 1;
-    uint8_t b = (in >> Pin::ENC_B) & 1;
-    g_encState = ((g_encState << 2) & 0x0F) | ((a << 1) | b);
-    g_encAccum += ENC_TABLE[g_encState];
+    uint8_t cur  = (uint8_t)((((in >> Pin::ENC_A) & 1) << 1) | ((in >> Pin::ENC_B) & 1));
+    uint8_t prev = g_encState & 0x03;
+    g_encEdges++;
+    if ((cur ^ prev) == 0x03) g_encBad++;
+    g_encState = ((g_encState << 2) & 0x0F) | cur;
+    int8_t d = ENC_TABLE[g_encState];
+    g_encAccum += d;
+    g_encNet   += d;
 }
 static int8_t popEncoderSteps() {
     noInterrupts();
@@ -103,15 +113,18 @@ static int8_t popEncoderSteps() {
 // ──────────────────────────────────────────────────────────────
 // 버튼 디바운싱
 // ──────────────────────────────────────────────────────────────
-struct Btn { uint8_t pin, state, lastRead; uint32_t lastEdgeMs; bool pressedEvt; };
-static Btn btnPush = {Pin::ENC_PUSH, HIGH, HIGH, 0, false};
-static Btn btnOk   = {Pin::KEY_OK,   HIGH, HIGH, 0, false};
+struct Btn { uint8_t pin, state, lastRead; uint32_t lastEdgeMs; bool pressedEvt; uint16_t glitches; };
+static Btn btnPush = {Pin::ENC_PUSH, HIGH, HIGH, 0, false, 0};
+static Btn btnOk   = {Pin::KEY_OK,   HIGH, HIGH, 0, false, 0};
 static const uint16_t BTN_DEBOUNCE_MS = 25;
 
 static void btnPoll(Btn& b) {
     uint8_t  r   = digitalRead(b.pin);
     uint32_t now = millis();
-    if (r != b.lastRead) { b.lastEdgeMs = now; b.lastRead = r; }
+    if (r != b.lastRead) {
+        if (r == b.state) b.glitches++;   // 확정 전 원복 = 단발 펄스(노이즈 의심)
+        b.lastEdgeMs = now; b.lastRead = r;
+    }
     if ((now - b.lastEdgeMs) >= BTN_DEBOUNCE_MS && r != b.state) {
         b.state = r;
         if (b.state == LOW) b.pressedEvt = true;
@@ -120,6 +133,70 @@ static void btnPoll(Btn& b) {
 static bool btnConsume(Btn& b) {
     if (b.pressedEvt) { b.pressedEvt = false; return true; }
     return false;
+}
+
+// ──────────────────────────────────────────────────────────────
+// 입력 노이즈 감시 — 스테퍼 EMI 등으로 인코더/버튼에 유령 입력이 들어오면
+// 패널 입력 전체 차단(인코더 인터럽트 OFF) + NoiseGuard 보고(지속 시 모터 정지).
+// 임계값은 윈도우 누적치로 매 사이클 비교 → 윈도우 끝을 기다리지 않고 즉시 차단.
+// ──────────────────────────────────────────────────────────────
+static bool     s_inputBlocked = false;
+static uint32_t s_blockStartMs = 0;
+static uint32_t s_noiseWinMs   = 0;
+static uint32_t s_peakEdges = 0, s_peakBad = 0, s_peakBtn = 0;   // 보정용 피크 (10초 로그)
+
+static void encIntrEnable(bool on) {
+    if (on) { gpio_intr_enable ((gpio_num_t)Pin::ENC_A); gpio_intr_enable ((gpio_num_t)Pin::ENC_B); }
+    else    { gpio_intr_disable((gpio_num_t)Pin::ENC_A); gpio_intr_disable((gpio_num_t)Pin::ENC_B); }
+}
+static void resetInputNoise() {
+    noInterrupts(); g_encAccum = 0; g_encEdges = 0; g_encBad = 0; g_encNet = 0; interrupts();
+    btnPush.glitches = btnOk.glitches = 0;
+    btnPush.pressedEvt = btnOk.pressedEvt = false;
+}
+
+// true = 이번 사이클 패널 입력 무시
+static bool noiseCheck() {
+    uint32_t now = millis();
+    if (s_inputBlocked) {
+        if (now - s_blockStartMs < Cfg::INPUT_BLOCK_MS) return true;
+        resetInputNoise();
+        s_noiseWinMs   = now;
+        s_inputBlocked = false;
+        encIntrEnable(true);
+        Serial.println("[Noise] 입력 차단 해제");
+        return true;
+    }
+
+    noInterrupts(); uint32_t edges = g_encEdges, bad = g_encBad; int32_t net = g_encNet; interrupts();
+    const bool human = (net >= Cfg::NOISE_ENC_HUMAN_NET || net <= -Cfg::NOISE_ENC_HUMAN_NET);
+    uint32_t btn = btnPush.glitches + btnOk.glitches;
+    if (edges > s_peakEdges) s_peakEdges = edges;
+    if (bad   > s_peakBad)   s_peakBad   = bad;
+    if (btn   > s_peakBtn)   s_peakBtn   = btn;
+
+    const char* src = edges >  Cfg::NOISE_ENC_EDGE_MAX   ? "encoder-rate"
+                    : (!human && bad > Cfg::NOISE_ENC_BAD_MAX) ? "encoder-invalid"
+                    : btn   >= Cfg::NOISE_BTN_GLITCH_MAX ? "button-glitch"
+                    : nullptr;
+    if (!src) {
+        if (now - s_noiseWinMs >= Cfg::NOISE_WIN_MS) {   // 윈도우 종료 — 누적 리셋
+            noInterrupts(); g_encEdges = 0; g_encBad = 0; g_encNet = 0; interrupts();
+            btnPush.glitches = btnOk.glitches = 0;
+            s_noiseWinMs = now;
+        }
+        return false;
+    }
+
+    encIntrEnable(false);                           // ISR 폭주로 Core 0 잠식 방지
+    resetInputNoise();                              // 이미 쌓인 유령 스텝/클릭 폐기
+    s_inputBlocked = true;
+    s_blockStartMs = now;
+    Serial.printf("[Noise] %s 감지 (enc %u / bad %u / net %d / btn %u, %ums 윈도우) → 패널 입력 %us 차단\n",
+                  src, (unsigned)edges, (unsigned)bad, (int)net, (unsigned)btn,
+                  (unsigned)Cfg::NOISE_WIN_MS, (unsigned)(Cfg::INPUT_BLOCK_MS / 1000));
+    s_guard->inputNoise(src);
+    return true;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -152,7 +229,13 @@ static void loadSaverPrefs() {
         p.end();
     }
 }
-static void saveSaverPrefs() {
+// 저장 요청만 표시 — 실제 NVS 쓰기는 displayTask가 모터 정지·레시피 비활성일 때 수행
+// (운전 중 플래시 쓰기 = 모터 펄스 큐 보충 정지 → 덜컹 위험). 값은 RAM에 즉시 반영됨.
+static volatile bool g_prefsDirty = false;
+static void saveSaverPrefs() { g_prefsDirty = true; }
+static void flushSaverPrefsIfIdle() {
+    if (!g_prefsDirty || s_motion->state() != MotorState::IDLE || s_recipe->active()) return;
+    g_prefsDirty = false;
     Preferences p;
     if (p.begin("ui", false)) {
         p.putBool("svOn",  g_uiSet.saverOn);
@@ -473,7 +556,9 @@ static void renderStatusLive() {
 
     const char* modeTxt = "IDLE";
     uint16_t    modeBg  = COL_GRAY;
-    if (waitConf)      { modeTxt = "CONFIRM"; modeBg = COL_AMBER; }
+    if (s_guard->motorLocked()) { modeTxt = "LOCKED"; modeBg = COL_RED; }
+    else if (s_inputBlocked)    { modeTxt = "NOISE";  modeBg = COL_RED; }
+    else if (waitConf) { modeTxt = "CONFIRM"; modeBg = COL_AMBER; }
     else if (paused)   { modeTxt = "PAUSE";   modeBg = COL_AMBER; }
     else if (running)  { modeTxt = "RECIPE";  modeBg = COL_GREEN; }
     else if (manual)   { modeTxt = "MANUAL";  modeBg = COL_BLUE;  }
@@ -928,7 +1013,8 @@ static void renderInfoFull() {
     tft.setTextSize(1);
     int y = 40;
     auto line = [&](const char* s){ tft.setCursor(10, y); tft.print(s); y += 15; };
-    line("Firmware    : v4.1 (C++/OOP)");
+    snprintf(buf, sizeof(buf), "Firmware    : %s (C++/OOP)", Cfg::FW_VERSION); line(buf);
+    snprintf(buf, sizeof(buf), "Guard       : %s (reset %d)", s_guard->status(), s_guard->resetReason()); line(buf);
     line("MCU         : ESP32-S3");
     line("Motor       : NEMA17 + TMC2209 (1/8 microstep)");
     line("Temp        : MAX31865 + PT100 (RREF 412 ohm)");
@@ -1106,14 +1192,23 @@ static void displayTask(void*) {
             UBaseType_t freeSt = uxTaskGetStackHighWaterMark(nullptr);
             Serial.printf("[DisplayTask] free stack: %u bytes%s\n",
                           (unsigned)freeSt, (freeSt < 1024) ? "  ⚠ 위험" : "");
+            Serial.printf("[Noise] 10s peak /%ums: enc %u (max %u)  bad %u (max %u)  btn %u (max %u)\n",
+                          (unsigned)Cfg::NOISE_WIN_MS,
+                          (unsigned)s_peakEdges, (unsigned)Cfg::NOISE_ENC_EDGE_MAX,
+                          (unsigned)s_peakBad,   (unsigned)Cfg::NOISE_ENC_BAD_MAX,
+                          (unsigned)s_peakBtn,   (unsigned)Cfg::NOISE_BTN_GLITCH_MAX);
+            s_peakEdges = s_peakBad = s_peakBtn = 0;
             lastStackLogMs = nowMs;
         }
 
+        flushSaverPrefsIfIdle();
         btnPoll(btnPush);
         btnPoll(btnOk);
+        const bool blocked = noiseCheck();
         int8_t delta = popEncoderSteps();
         bool pushed  = btnConsume(btnPush);
         bool oked    = btnConsume(btnOk);
+        if (blocked) { delta = 0; pushed = oked = false; }
         bool anyInput = (delta != 0) || pushed || oked;
         if (anyInput) touchInput();
 
@@ -1250,6 +1345,7 @@ void DisplayUI::begin(const Deps& deps) {
     s_temp   = deps.temp;
     s_cmd    = deps.cmd;
     s_stage  = deps.stage;
+    s_guard  = deps.guard;
     loadSaverPrefs();
 }
 

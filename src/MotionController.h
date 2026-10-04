@@ -21,7 +21,6 @@ public:
     // ── 구동 명령 (Core 1 전용) ──
     void beginRun(int rpm, bool fwd);   // 출력축 RPM, 방향
     void stopImmediate();               // 비상: forceStop + EN 차단 + IDLE (targetRpm=0)
-    void freeze();                      // 일시정지: halt + EN 차단 + IDLE (targetRpm 유지)
     void requestSafeStop();             // 가속도 곡선 감속 후 IDLE
     void requestStepStop();             // 레시피 단계 종료 감속 → STOP_RECIPE
 
@@ -33,6 +32,7 @@ public:
     void setManualMode(bool on)  { _manualMode = on; } // 상태 태그(로직엔 미영향)
     void setRotIntSec(int s)     { _rotIntSec = s; }
     void setAcceleration(float a){ if (_stepper) _stepper->setAcceleration((uint32_t)a); }
+    void setLocked(bool on)      { _locked = on; }     // NoiseGuard 잠금 — beginRun 전면 거부
 
     // ── 조회 ──
     MotorState state()     const { return _state; }
@@ -66,4 +66,5 @@ private:
     bool       _cycle     = true;     // = !noCycle
     bool       _manualMode = false;   // 상태 표시용 태그
     bool       _stepStoppedEvt = false;
+    bool       _locked = false;
 };

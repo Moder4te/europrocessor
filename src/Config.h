@@ -45,6 +45,8 @@ namespace Pin {
 }
 
 namespace Cfg {
+    constexpr const char* FW_VERSION = "v4.6.4";
+
     // 모터 — 마이크로스텝 8 (MS1=LOW, MS2=LOW) → 1600 step/rev
     constexpr int   STEPS_PER_REV = 1600;        // 200 × 8
     constexpr float GEAR_RATIO    = 3.71f;
@@ -83,4 +85,32 @@ namespace Cfg {
 
     // 센티넬 온도값
     constexpr float TEMP_UNREAD = -999.0f;
+
+    // 온도 스파이크 제거 — 수조(수 L)는 1초에 이만큼 못 변함 → 초과치는 노이즈로 버림.
+    //   연속 N회 초과면 실제 변화(센서 이동 등)로 보고 새 기준 수용.
+    constexpr float   TEMP_MAX_STEP_C         = 2.0f;
+    constexpr uint8_t TEMP_SPIKE_ACCEPT_AFTER = 3;
+
+    // ── 노이즈 가드 (NoiseGuard) ──
+    //   ★실측 보정용 노브★ — 10초마다 [Noise] peak 로그 보고 조정. 정상 조작 피크의 ~3배로.
+    //   입력 윈도우(NOISE_WIN_MS) 내 아래 중 하나라도 넘으면 → 패널 입력 차단 INPUT_BLOCK_MS.
+    constexpr uint32_t NOISE_WIN_MS         = 500;
+    constexpr uint32_t NOISE_ENC_EDGE_MAX   = 2000; // 인코더 ISR 폭주 상한 (Core 0 보호용, 바운스 포함 손조작보다 충분히 큼)
+    constexpr uint32_t NOISE_ENC_BAD_MAX    = 60;   // A·B 동시변화(물리적으로 불가능한 전이) — 손조작이 아닐 때만 판정
+    //   윈도우 내 한 방향 순이동이 이 전이 수 이상이면 손조작으로 보고 BAD 판정 면제
+    //   (4전이 = 1디텐트. 노이즈는 제자리 왕복이라 순이동 ≈ 0, 손은 한 방향으로 누적)
+    constexpr int32_t  NOISE_ENC_HUMAN_NET  = 8;
+    constexpr uint32_t NOISE_BTN_GLITCH_MAX = 3;    // 디바운스 확정 전 원복된 순간 펄스
+    constexpr uint32_t INPUT_BLOCK_MS       = 3000;
+    //   ESCALATE_WIN_MS 안에 버스트 N회 → 모터 정지(레시피는 일시정지=재개 가능)
+    constexpr uint8_t  NOISE_ESCALATE_BURSTS = 3;
+    constexpr uint32_t NOISE_ESCALATE_WIN_MS = 60000;
+    //   비정상 리셋(브라운아웃/패닉/WDT) 연속 N회 → 모터 잠금 (전원 재투입으로 해제)
+    //   STABLE_MS 이상 정상 가동하면 카운터 리셋.
+    constexpr uint8_t  GUARD_BAD_RESETS = 3;
+    constexpr uint32_t GUARD_STABLE_MS  = 60000;
+
+    // 웹 JSON 본문 상한 — 비정상 Content-Length로 힙 고갈 방지
+    constexpr size_t MAX_JSON_BODY = 16384;
+    constexpr size_t MAX_RECIPES_BODY = 65536;   // /recipes.json 상한 (검증 시 통째 파싱하므로 힙 보호)
 }

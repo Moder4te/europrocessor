@@ -1,13 +1,23 @@
 #include "WebServer.h"
 #include "Config.h"
 #include "web_assets.h"
+#include "web_multi.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <WiFi.h>
+#include <Update.h>
+#include <Preferences.h>
+#include <esp_heap_caps.h>
+
+// send()는 응답을 저장만 하고 전송은 핸들러 반환 후 — 핸들러 안에서 restart 하면 응답 유실.
+// 1초 뒤 별도 태스크로 재시작.
+static void scheduleReboot() {
+    xTaskCreate([](void*){ vTaskDelay(pdMS_TO_TICKS(1000)); ESP.restart(); },
+                "reboot", 2048, nullptr, 1, nullptr);
+}
 
 void WebServer::begin(const Deps& deps) {
     _d = deps;
-    _startBuf.reserve(4096);
 
     // 전역 CORS 헤더 — file:// 또는 외부 오리진(Recipe Editor) API 허용
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin",  "*");
@@ -57,6 +67,18 @@ String WebServer::buildStatus() {
     doc["staConn"] = staOK;
     doc["staIP"]   = WifiManager::staIP();
 
+    doc["guard"]       = _d.guard->status();      // ok / noise / locked
+    doc["resetReason"] = _d.guard->resetReason();
+
+    // 장시간 운전 진단 — 내부 RAM(lwIP/AsyncTCP 영역). free·largest가 계속 줄면 누수/단편화
+    doc["fw"]       = Cfg::FW_VERSION;
+    doc["name"]     = _d.wifi->hostName();
+    doc["boardId"]  = _d.wifi->settings().boardId;
+    doc["upSec"]    = (uint32_t)(millis() / 1000);
+    doc["heapFree"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    doc["heapMin"]  = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    doc["heapMax"]  = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+
     String out; out.reserve(1024);
     serializeJson(doc, out);
     return out;
@@ -67,6 +89,9 @@ void WebServer::setupRoutes() {
         // 길이 지정 오버로드 → 플래시에서 직접 전송 (String 복사 ~40KB 힙 스파이크 회피)
         req->send(200, "text/html", (const uint8_t*)INDEX_HTML, sizeof(INDEX_HTML) - 1);
     });
+    _server.on("/multi", HTTP_GET, [](AsyncWebServerRequest* req){
+        req->send(200, "text/html", (const uint8_t*)MULTI_HTML, sizeof(MULTI_HTML) - 1);
+    });
     _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* req){
         req->send(200, "application/json", buildStatus());
     });
@@ -75,16 +100,26 @@ void WebServer::setupRoutes() {
     _server.on("/api/start", HTTP_POST,
         [](AsyncWebServerRequest*){}, nullptr,
         [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
-            if (index == 0) { _startBuf = ""; _startBuf.reserve(total + 1); }
-            _startBuf.concat(reinterpret_cast<const char*>(data), len);
+            if (total > Cfg::MAX_JSON_BODY) {   // 비정상 Content-Length → reserve 힙 고갈 방지
+                if (index + len >= total) req->send(413, "application/json", "{\"ok\":false}");
+                return;
+            }
+            // 요청별 버퍼(_tempObject) — 여러 폰/보드가 동시에 시작해도 본문이 섞이지 않음.
+            //   요청 소멸 시 라이브러리가 free() 해줌.
+            if (index == 0) req->_tempObject = malloc(total + 1);
+            char* buf = static_cast<char*>(req->_tempObject);
+            if (!buf) {
+                if (index + len >= total) req->send(500, "application/json", "{\"ok\":false}");
+                return;
+            }
+            memcpy(buf + index, data, len);
             if (index + len < total) return;
+            buf[total] = 0;
 
             JsonDocument doc;
-            if (deserializeJson(doc, _startBuf)) {
-                _startBuf = "";
+            if (deserializeJson(doc, buf, total)) {
                 req->send(400, "application/json", "{\"ok\":false}"); return;
             }
-            _startBuf = "";
 
             String rname = doc["recipeName"] | String("Unknown");
             std::vector<StepInfo> steps;
@@ -107,6 +142,36 @@ void WebServer::setupRoutes() {
         _d.cmd->requestEstop();   // 큐 우회 — 유실 금지
         req->send(200, "application/json", "{\"ok\":true}");
     });
+    // ── 단계 이동: {"step": N(0부터)} ──
+    _server.on("/api/goto", HTTP_POST,
+        [](AsyncWebServerRequest*){}, nullptr,
+        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t){
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len) || !doc["step"].is<int>()) {
+                req->send(400, "application/json", "{\"ok\":false}"); return;
+            }
+            if (!_d.recipe->active()) {
+                req->send(409, "application/json", "{\"ok\":false,\"error\":\"no recipe\"}"); return;
+            }
+            Cmd c{}; c.type = CmdType::GOTO_STEP; c.step = doc["step"].as<int>();
+            bool ok = _d.cmd->enqueue(c);
+            req->send(ok ? 200 : 503, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        }
+    );
+    // ── 현재 실행 중 레시피 단계 목록 (모든 클라이언트가 같은 진행도 바를 그리도록) ──
+    _server.on("/api/recipe", HTTP_GET, [this](AsyncWebServerRequest* req){
+        String name; std::vector<StepInfo> steps;
+        _d.recipe->copySteps(name, steps);
+        JsonDocument doc;
+        doc["name"] = name;
+        JsonArray arr = doc["steps"].to<JsonArray>();
+        for (const StepInfo& s : steps) {
+            JsonObject o = arr.add<JsonObject>();
+            o["name"] = s.name; o["durSec"] = s.durSec; o["speedRpm"] = s.speedRpm;
+        }
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
     _server.on("/api/pause", HTTP_POST, [this](AsyncWebServerRequest* req){
         Cmd c{}; c.type = CmdType::PAUSE_TOGGLE;
         _d.cmd->enqueue(c);
@@ -124,8 +189,9 @@ void WebServer::setupRoutes() {
     });
     _server.on("/api/safestop", HTTP_POST, [this](AsyncWebServerRequest* req){
         Cmd c{}; c.type = CmdType::SAFE_STOP;   // 수동 운전 안전 정지 (감속)
-        _d.cmd->enqueue(c);
-        req->send(200, "application/json", "{\"ok\":true}");
+        // 큐 full이면 503 → 클라이언트가 재시도 (기존: 실패해도 200이라 정지 유실이 안 보임)
+        bool ok = _d.cmd->enqueue(c);
+        req->send(ok ? 200 : 503, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
     });
     _server.on("/api/manual", HTTP_POST,
         [](AsyncWebServerRequest*){}, nullptr,
@@ -158,17 +224,26 @@ void WebServer::setupRoutes() {
         doc["staGW"]       = s.staGW;
         doc["staSN"]       = s.staSN;
         doc["staDNS"]      = s.staDNS;
+        doc["boardId"]     = s.boardId;
+        doc["apIP"]        = _d.wifi->apIP().toString();
+        doc["hostName"]    = _d.wifi->hostName();
         String out; serializeJson(doc, out); req->send(200, "application/json", out);
     });
     _server.on("/api/settings", HTTP_POST,
         [](AsyncWebServerRequest*){}, nullptr,
         [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t){
+            // 저장 = NVS 쓰기 + 재부팅. 운전 중이면 레시피 소실·모터 급정지(리셋 중 EN 플로팅) → 거부
+            if (motorBusy()) {
+                req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}"); return;
+            }
             JsonDocument doc;
             if (deserializeJson(doc, data, len)) {
                 req->send(400, "application/json", "{\"ok\":false}"); return;
             }
             WifiSettings& s = _d.wifi->settings();
-            s.apSSID  = doc["apSSID"]  | s.apSSID;
+            // 빈/32자 초과 SSID, 63자 초과 비번 → softAP 기동 실패 = AP 접속 불가(복구엔 재플래시). 거부.
+            String newApSSID = doc["apSSID"] | s.apSSID;
+            if (newApSSID.length() >= 1 && newApSSID.length() <= 32) s.apSSID = newApSSID;
             String newApPass  = doc["apPass"]  | String("");
             s.staSSID = doc["staSSID"] | String("");
             String newStaPass = doc["staPass"] | String("");
@@ -177,15 +252,14 @@ void WebServer::setupRoutes() {
             s.staGW       = doc["staGW"]       | String("192.168.1.1");
             s.staSN       = doc["staSN"]       | String("255.255.255.0");
             s.staDNS      = doc["staDNS"]      | String("8.8.8.8");
+            if (doc["boardId"].is<int>()) s.boardId = constrain(doc["boardId"].as<int>(), 1, 9);
             // 비밀번호: 8자 이상일 때만 갱신 (빈 값이면 기존 유지)
-            if (newApPass.length()  >= 8) s.apPass  = newApPass;
-            if (newStaPass.length() >= 8) s.staPass = newStaPass;
+            if (newApPass.length()  >= 8 && newApPass.length()  <= 63) s.apPass  = newApPass;
+            if (newStaPass.length() >= 8 && newStaPass.length() <= 63) s.staPass = newStaPass;
+            if (s.staSSID.length() == 0) s.staPass = "";   // 홈 WiFi 삭제 시 비번도 삭제 → 재부팅 후 AP 단독 모드
             _d.wifi->save();
             req->send(200, "application/json", "{\"ok\":true}");
-            // send()는 응답을 저장만 하고 전송은 핸들러 반환 후 — 여기서
-            // delay+restart 하면 응답이 유실된다. 1초 뒤 별도 태스크로 재시작.
-            xTaskCreate([](void*){ vTaskDelay(pdMS_TO_TICKS(1000)); ESP.restart(); },
-                        "reboot", 2048, nullptr, 1, nullptr);
+            scheduleReboot();
         }
     );
 
@@ -198,19 +272,62 @@ void WebServer::setupRoutes() {
         }
         req->send(LittleFS, "/recipes.json", "application/json");
     });
+    // ── 레시피 저장 — 방어:
+    //   · 모터/레시피 동작 중 거부 (플래시 소거 수십 ms 동안 모터 펄스 큐 보충이 멈춰 덜컹일 수 있음)
+    //   · 동시 저장 거부 (두 기기가 같은 임시파일에 이어쓰면 파일 손상)
+    //   · 크기 상한 / 쓰기 실패 감지 / 커밋 전 JSON 검증 (깨진 파일이 기존 레시피를 덮어쓰지 않게)
+    //   요청별 상태는 _tempObject(1바이트 코드)에 — 거부된 요청끼리도 각자 올바른 응답.
     _server.on("/api/recipes/save", HTTP_POST,
         [](AsyncWebServerRequest*){}, nullptr,
-        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
-            File f = LittleFS.open("/recipes.tmp", index == 0 ? "w" : "a");
-            if (f) { f.write(data, len); f.close(); }
-            if (index + len >= total) {
-                bool ok = LittleFS.rename("/recipes.tmp", "/recipes.json");
-                if (!ok) {
-                    LittleFS.remove("/recipes.json");
-                    ok = LittleFS.rename("/recipes.tmp", "/recipes.json");
+        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
+            enum : uint8_t { REC_OK, REC_TOO_LARGE, REC_MOTOR, REC_BUSY, REC_IO, REC_INVALID };
+            if (index == 0) {
+                uint8_t* st = static_cast<uint8_t*>(malloc(1));
+                req->_tempObject = st;
+                if (!st) return;
+                *st = REC_OK;
+                if (total > Cfg::MAX_RECIPES_BODY)                            *st = REC_TOO_LARGE;
+                else if (motorBusy())                                         *st = REC_MOTOR;
+                else if (_recReq && millis() - _recLastMs < 5000)             *st = REC_BUSY;
+                else {
+                    if (_recFile) _recFile.close();                           // 끊긴 이전 업로드 정리
+                    _recFile = LittleFS.open("/recipes.tmp", "w");
+                    if (!_recFile) *st = REC_IO;
+                    else { _recReq = req; _recLastMs = millis(); }
                 }
-                req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
             }
+            uint8_t* st = static_cast<uint8_t*>(req->_tempObject);
+            if (!st) { if (index + len >= total) req->send(500, "application/json", "{\"ok\":false,\"error\":\"oom\"}"); return; }
+
+            if (*st == REC_OK && req == _recReq) {
+                _recLastMs = millis();
+                if (motorBusy())                              *st = REC_MOTOR;   // 업로드 중 모터 기동
+                else if (_recFile.write(data, len) != len)    *st = REC_IO;      // 저장공간 부족 등
+                if (*st != REC_OK) { _recFile.close(); LittleFS.remove("/recipes.tmp"); _recReq = nullptr; }
+            }
+            if (index + len < total) return;
+
+            if (*st == REC_OK && req == _recReq) {
+                _recFile.close();
+                _recReq = nullptr;
+                File f = LittleFS.open("/recipes.tmp", "r");
+                JsonDocument doc;
+                bool valid = f && !deserializeJson(doc, f) && doc.is<JsonObject>();
+                if (f) f.close();
+                if (!valid) {
+                    *st = REC_INVALID;
+                    LittleFS.remove("/recipes.tmp");
+                } else {
+                    bool ok = LittleFS.rename("/recipes.tmp", "/recipes.json");
+                    if (!ok) { LittleFS.remove("/recipes.json"); ok = LittleFS.rename("/recipes.tmp", "/recipes.json"); }
+                    if (!ok) *st = REC_IO;
+                }
+            }
+            static const char* const ERR[] = { "", "too large", "motor running", "busy", "write failed", "invalid json" };
+            static const int CODE[] = { 200, 413, 409, 409, 507, 400 };
+            if (*st == REC_OK) req->send(200, "application/json", "{\"ok\":true}");
+            else req->send(CODE[*st], "application/json",
+                           String("{\"ok\":false,\"error\":\"") + ERR[*st] + "\"}");
         }
     );
 
@@ -254,6 +371,8 @@ void WebServer::setupRoutes() {
         [this](AsyncWebServerRequest* req){
             if (_upOk && _upWritten > 0) {
                 req->send(200, "application/json", "{\"ok\":true}");
+            } else if (motorBusy()) {   // 운전 중 거부/중단 — 원인을 정확히 알림
+                req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}");
             } else {
                 req->send(415, "application/json",
                           "{\"ok\":false,\"error\":\"unsupported or empty image\"}");
@@ -266,8 +385,8 @@ void WebServer::setupRoutes() {
             if (index == 0) {
                 _upOk = false; _upWritten = 0; savePath = "";
                 if (_upFile) _upFile.close();   // 이전 업로드 잔여 핸들 정리
-                // 모터 운전 중 플래시 쓰기 금지 — 인코더 인터럽트와 겹치면 캐시 크래시
-                if (_d.motion->state() != MotorState::IDLE) {
+                // 모터 운전 중 플래시 쓰기 금지 — 펄스 큐 보충 정지(덜컹) 방지
+                if (motorBusy()) {
                     Serial.println("[Saver] upload 거부: 모터 운전 중 (정지 후 재시도)");
                     return;   // savePath 빈 채 → 파일 안 열고 write 스킵
                 }
@@ -294,7 +413,7 @@ void WebServer::setupRoutes() {
                 Serial.printf("[Saver] upload start: %s → %s\n", filename.c_str(), savePath.c_str());
             }
             // 업로드 도중 모터가 기동하면 즉시 중단 — 플래시 write ↔ 인코더 인터럽트 캐시 크래시 회피
-            if (_upFile && _d.motion->state() != MotorState::IDLE) {
+            if (_upFile && motorBusy()) {
                 _upFile.close();
                 if (savePath.length()) LittleFS.remove(savePath);
                 savePath = ""; _upOk = false; _upWritten = 0;
@@ -313,7 +432,7 @@ void WebServer::setupRoutes() {
         }
     );
     _server.on("/api/saver/image", HTTP_DELETE, [this](AsyncWebServerRequest* req){
-        if (_d.motion->state() != MotorState::IDLE) {   // 모터 운전 중 플래시 삭제 금지
+        if (motorBusy()) {   // 모터 운전 중 플래시 삭제 금지
             req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}");
             return;
         }
@@ -322,6 +441,65 @@ void WebServer::setupRoutes() {
         for (const char* fp : files) if (LittleFS.exists(fp)) { LittleFS.remove(fp); removed = true; }
         req->send(200, "application/json", removed ? "{\"ok\":true}" : "{\"ok\":true,\"noop\":true}");
     });
+
+    // ── OTA 펌웨어 업데이트 (웹에서 firmware.bin 업로드 → 비활성 app 파티션에 기록 → 재부팅) ──
+    //   · X-OTA 헤더 필수: 커스텀 헤더는 CORS 프리플라이트 대상이고 Allow-Headers엔 Content-Type만
+    //     있으므로, 외부 웹페이지가 브라우저를 통해 몰래 펌웨어를 올리는 것(CSRF)을 차단.
+    //   · 모터/레시피 동작 중 거부 (플래시 쓰기 ↔ 모터 타이밍 간섭 회피).
+    //   · 성공 시 NVS "ota/pending" 표시 → 새 펌웨어가 크래시 루프면 main이 이전 파티션으로 자동 롤백.
+    _server.on("/api/ota", HTTP_POST,
+        [this](AsyncWebServerRequest* req){
+            if (req != _otaReq) {   // 다른 기기가 업로드 중이라 거부된 요청
+                req->send(409, "application/json", "{\"ok\":false,\"error\":\"busy\"}");
+                return;
+            }
+            _otaReq = nullptr;
+            if (_otaOk) {
+                req->send(200, "application/json", "{\"ok\":true}");
+                Serial.println("[OTA] 완료 — 1초 후 재부팅");
+                scheduleReboot();
+            } else {
+                req->send(500, "application/json",
+                          String("{\"ok\":false,\"error\":\"") + (_otaErr.length() ? _otaErr : String("empty")) + "\"}");
+            }
+            _otaOk = false;
+        },
+        [this](AsyncWebServerRequest* req, String filename, size_t index,
+               uint8_t* data, size_t len, bool final){
+            if (index == 0) {
+                // 다른 기기가 업로드 중이면 거부. 단 10초간 청크가 없으면 끊긴 업로드로 보고 정리.
+                if (Update.isRunning()) {
+                    if (millis() - _otaLastMs < 10000) return;   // 완료 핸들러가 409 busy 응답
+                    Update.abort();
+                }
+                _otaReq = req; _otaLastMs = millis();
+                _otaOk = false; _otaErr = "";
+                if (!req->hasHeader("X-OTA"))             { _otaErr = "forbidden";     return; }
+                if (motorBusy())
+                                                          { _otaErr = "motor running"; return; }
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { _otaErr = Update.errorString(); return; }
+                Serial.printf("[OTA] 시작: %s\n", filename.c_str());
+            }
+            if (req != _otaReq || !Update.isRunning()) return;   // 거부/실패/남의 업로드 청크 무시
+            _otaLastMs = millis();
+            if (motorBusy()) {        // 업로드 도중 모터 기동 → 중단
+                Update.abort(); _otaErr = "motor started"; return;
+            }
+            if (Update.write(data, len) != len) {                // 첫 바이트 0xE9 아니면 여기서 거부됨
+                _otaErr = Update.errorString(); Update.abort(); return;
+            }
+            if (final) {
+                if (Update.end(true)) {                          // 이미지 검증 + 부트 파티션 전환
+                    Preferences p;
+                    if (p.begin("ota", false)) { p.putBool("pending", true); p.end(); }
+                    _otaOk = true;
+                    Serial.printf("[OTA] 기록 완료: %u bytes\n", (unsigned)(index + len));
+                } else {
+                    _otaErr = Update.errorString();
+                }
+            }
+        }
+    );
 
     _server.onNotFound([](AsyncWebServerRequest* req){
         if (req->method() == HTTP_OPTIONS) req->send(200);

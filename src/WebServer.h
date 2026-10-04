@@ -17,6 +17,7 @@
 #include "WifiManager.h"
 #include "RecipeStage.h"
 #include "ISaver.h"
+#include "NoiseGuard.h"
 
 class WebServer {
 public:
@@ -28,6 +29,7 @@ public:
         WifiManager*       wifi;
         ISaver*            saver;
         RecipeStage*       stage;
+        NoiseGuard*        guard;
     };
 
     void begin(const Deps& deps);
@@ -35,15 +37,25 @@ public:
 private:
     void   setupRoutes();
     String buildStatus();
+    // 모터 회전/감속 중이거나 레시피 진행 중(일시정지·확인대기 포함) → 플래시 쓰기·재부팅 금지
+    bool   motorBusy() const { return _d.motion->state() != MotorState::IDLE || _d.recipe->active(); }
 
     AsyncWebServer    _server{80};
     Deps              _d{};
-
-    // /api/start 청크 조립 버퍼
-    String            _startBuf;
 
     // 화면보호기 업로드 — 본문 핸들러(set)와 완료 핸들러(read) 공유 상태
     bool              _upOk      = false;
     size_t            _upWritten = 0;
     File              _upFile;        // 업로드 중 열린 채 유지 (청크마다 open/close 회피)
+
+    // 레시피 저장 — 동시 저장 차단용 소유자 + 열린 임시파일
+    AsyncWebServerRequest* _recReq = nullptr;
+    uint32_t          _recLastMs = 0;
+    File              _recFile;
+
+    // OTA — 본문 핸들러(set)와 완료 핸들러(read) 공유
+    bool              _otaOk = false;
+    String            _otaErr;
+    AsyncWebServerRequest* _otaReq = nullptr;   // 진행 중 업로드 소유자 (동시 OTA 차단)
+    uint32_t          _otaLastMs = 0;           // 마지막 청크 시각 — 끊긴 업로드 판정
 };

@@ -107,6 +107,25 @@ void TemperatureSensor::taskLoop() {
         float    t   = _sensor.calculateTemperature(raw, Cfg::RNOMINAL, Cfg::RREF);
         uint8_t  f   = _sensor.readFault();
         const bool noComm = (raw == 0x0000 || raw == 0x7FFF);
+        // 미통신이면 칩 fault 레지스터도 못 믿음 → D0(칩 미사용 비트)을 SW 플래그로 fault 처리.
+        //   (기존: fault=0이면 raw 0x7FFF → ~988°C가 정상값으로 표시됨)
+        if (noComm) f |= 0x01;
+
+        // 스파이크 제거 — 직전 정상값 대비 TEMP_MAX_STEP_C 초과 점프는 노이즈로 보고 버림(직전값 유지).
+        //   연속 TEMP_SPIKE_ACCEPT_AFTER회 이어지면 실제 변화로 수용.
+        bool spike = false;
+        if (!f) {
+            if (_lastGood != Cfg::TEMP_UNREAD && fabsf(t - _lastGood) > Cfg::TEMP_MAX_STEP_C &&
+                ++_spikeCount < Cfg::TEMP_SPIKE_ACCEPT_AFTER) {
+                spike = true;
+                Serial.printf("[온도] 스파이크 무시: %.2f °C (기준 %.2f, %u회)\n",
+                              t, _lastGood, (unsigned)_spikeCount);
+                t = _lastGood;
+            } else {
+                _spikeCount = 0;
+                _lastGood   = t;
+            }
+        }
 
         // fault 즉시 clear 금지 — 연속 N회 누적 후에만 (단선 가시화)
         bool     shouldClear = false;
@@ -137,9 +156,10 @@ void TemperatureSensor::taskLoop() {
             if (f & 0x10) add("REFIN-개방(기준/-측) ");
             if (f & 0x08) add("RTDIN-개방(단일선/-측) ");
             if (f & 0x04) add("과·저전압(완전개방?) ");
+            if (f & 0x01) add("SPI미통신 ");
             Serial.printf("[온도 오류] fault=0x%02X [%s] raw=0x%04X (연속 %u회)%s\n",
                           f, fb, raw, cnt, noComm ? " ← SPI미통신" : "");
-        } else {
+        } else if (!spike) {
             Serial.printf("[온도] %.2f °C (raw=0x%04X)\n", t, raw);
         }
     }

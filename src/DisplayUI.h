@@ -13,6 +13,7 @@
 #include "TemperatureSensor.h"
 #include "CommandQueue.h"
 #include "RecipeStage.h"
+#include "NoiseGuard.h"
 
 class DisplayUI : public ISaver {
 public:
@@ -22,6 +23,7 @@ public:
         TemperatureSensor* temp;
         CommandQueue*      cmd;
         RecipeStage*       stage;
+        NoiseGuard*        guard;
     };
 
     void begin(const Deps& deps);   // deps 주입 + 화면보호기 prefs 로드

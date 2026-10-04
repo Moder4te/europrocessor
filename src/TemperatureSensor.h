@@ -31,6 +31,8 @@ private:
     float    _temp       = Cfg::TEMP_UNREAD;
     uint8_t  _fault      = 0;
     uint16_t _faultCount = 0;     // 연속 fault 카운터
+    float    _lastGood   = Cfg::TEMP_UNREAD;   // 스파이크 판정 기준 (tempTask 전용)
+    uint8_t  _spikeCount = 0;
 
     // 부팅 SPI 자가진단 결과 (begin서 1회 측정 → tempTask가 반복 출력)
     bool     _spiOk      = false;

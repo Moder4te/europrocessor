@@ -1,13 +1,42 @@
 #include "MotionController.h"
 #include <cstdlib>   // std::abs(int64_t)
+#include <esp_heap_caps.h>
+#include <soc/soc_memory_types.h>   // esp_ptr_external_ram (IDF 4.4)
+
+// ★IDF 4.4 PCNT 버그 회피 (reset 4 = "Cache disabled but cached memory region accessed")★
+//   pcnt 드라이버가 p_pcnt_obj를 heap_caps_calloc(MALLOC_CAP_DEFAULT)로 할당 → PSRAM에 놓일 수 있음.
+//   FastAccelStepper(MCPWM/PCNT)가 모터 운전 중 PCNT ISR(IRAM)을 계속 발생시키는데, 그때 다른 코어가
+//   플래시를 읽으면(LittleFS/NVS — 캐시 OFF) ISR이 PSRAM 객체를 읽다 패닉.
+//   (2026-10-04 UART 백트레이스로 확정: pcnt_intr_service, p_pcnt_obj=0x3d800908)
+//   → FAS 초기화 동안만 PSRAM 여유 블록을 전부 점유해 내부 RAM 할당을 강제, 직후 해제.
+static void initWithPsramHeld(FastAccelStepperEngine& eng, FastAccelStepper*& st, uint8_t stepPin) {
+    void* hold[32];
+    int   n = 0;
+    while (n < 32) {
+        size_t big = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+        if (big < 16) break;
+        void* p = heap_caps_malloc(big, MALLOC_CAP_SPIRAM);
+        if (!p) break;
+        hold[n++] = p;
+    }
+    void* probe = heap_caps_calloc(1, 64, MALLOC_CAP_DEFAULT);   // 같은 할당 방식이 어디로 가는지 확인
+    const bool probeExt = probe && esp_ptr_external_ram(probe);
+    free(probe);
+
+    eng.init();
+    st = eng.stepperConnectToPin(stepPin);
+
+    for (int i = 0; i < n; ++i) free(hold[i]);
+    Serial.printf("[Stepper] PSRAM %d블록 점유 중 초기화 — DEFAULT 할당 위치: %s\n",
+                  n, probeExt ? "PSRAM ⚠ (회피 실패)" : "내부 RAM (정상)");
+}
 
 void MotionController::begin() {
     // EN 핀은 setup()에서 이미 OUTPUT+HIGH(차단)로 고정됨. 여기선 재확인.
     pinMode(Pin::EN, OUTPUT);
     disableCoils();
 
-    _engine.init();
-    _stepper = _engine.stepperConnectToPin(Pin::STEP);
+    initWithPsramHeld(_engine, _stepper, Pin::STEP);
     if (_stepper) {
         _stepper->setDirectionPin(Pin::DIR);
         _stepper->setSpeedInHz((uint32_t)Cfg::MAX_SPEED);   // 기본 최고속
@@ -33,6 +62,11 @@ void MotionController::applyRamp(float targetSteps) {
 
 void MotionController::beginRun(int rpm, bool fwd) {
     if (!_stepper) return;   // stepperConnectToPin 실패 시 null deref 방지
+    if (_locked) {           // 모든 기동 경로(수동/레시피/재개/방향전환)가 여기를 지남 → 단일 차단점
+        disableCoils(); _state = MotorState::IDLE;
+        Serial.println("[Guard] 모터 잠금 상태 — 기동 거부");
+        return;
+    }
     if (rpm <= 0) { disableCoils(); _state = MotorState::IDLE; return; }
 
     int   safeRpm = constrain(rpm, (int)Cfg::MIN_OUTPUT_RPM, (int)Cfg::MAX_OUTPUT_RPM);
@@ -57,14 +91,6 @@ void MotionController::stopImmediate() {
     _state     = MotorState::IDLE;
     _curRpm    = 0.0f;
     _targetRpm = 0;
-}
-
-void MotionController::freeze() {
-    // 일시정지용 — 즉시 멈추되 targetRpm 보존(재개 시 사용)
-    haltStepper();
-    disableCoils();
-    _state  = MotorState::IDLE;
-    _curRpm = 0.0f;
 }
 
 void MotionController::requestSafeStop() {

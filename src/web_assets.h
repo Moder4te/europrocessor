@@ -135,6 +135,7 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
       <span class="card-title" data-i18n="recipes"></span>
       <button class="btn btn-primary btn-sm" onclick="addRecipe()" data-i18n="add_recipe"></button>
     </div>
+    <div id="save-st" style="font-size:12px;margin:-4px 0 8px;min-height:16px;color:var(--muted);"></div>
     <ul class="recipe-list" id="recipe-list"></ul>
     <div id="recipe-empty" class="empty-state" style="display:none;">
       <div class="empty-icon">📷</div><div data-i18n="no_recipes"></div>
@@ -262,6 +263,11 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
       <input class="form-in" id="set-ap-ssid" type="text" maxlength="32" autocomplete="off">
     </div>
     <div class="form-grp">
+      <label class="form-lbl" data-i18n="board_id"></label>
+      <select class="form-in" id="set-board-id"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option></select>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;" data-i18n="board_id_hint"></div>
+    </div>
+    <div class="form-grp">
       <label class="form-lbl" data-i18n="wifi_pass"></label>
       <input class="form-in" id="set-ap-pass" type="password" maxlength="64" autocomplete="new-password" placeholder="(변경 시에만 입력)">
     </div>
@@ -303,7 +309,9 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   </div>
   <div class="card">
     <div class="card-title" data-i18n="net_status"></div>
-    <div class="info-row"><span data-i18n="ap_ip"></span><span class="info-val">192.168.4.1</span></div>
+    <div class="info-row"><span data-i18n="ap_ip"></span><span class="info-val" id="ap-ip-val">—</span></div>
+    <div class="info-row"><span>mDNS</span><span class="info-val" id="host-val">—</span></div>
+    <a class="btn btn-outline" style="display:block;text-align:center;margin-top:10px;text-decoration:none;" href="/multi" data-i18n="multi_link"></a>
     <div class="info-row">
       <span data-i18n="home_wifi"></span>
       <span id="sta-chip" class="chip chip-off" data-i18n="sta_disconn"></span>
@@ -355,10 +363,23 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   </div>
   <div class="card">
     <div class="card-title" data-i18n="about"></div>
-    <div class="info-row"><span>Firmware</span><span class="info-val">v3.0</span></div>
+    <div class="info-row"><span>Firmware</span><span class="info-val" id="ab-fw">—</span></div>
+    <div class="info-row"><span>Uptime</span><span class="info-val" id="ab-up">—</span></div>
+    <div class="info-row"><span>Memory (free / min / block)</span><span class="info-val" id="ab-heap">—</span></div>
+    <div class="info-row"><span>Guard</span><span class="info-val" id="ab-guard">—</span></div>
     <div class="info-row"><span>MCU</span><span class="info-val">ESP32-S3</span></div>
     <div class="info-row"><span>Driver</span><span class="info-val">TMC2209 (Stepper)</span></div>
     <div class="info-row"><span>Temp</span><span class="info-val">MAX31865 + PT100</span></div>
+  </div>
+  <div class="card">
+    <div class="card-title" data-i18n="ota_title"></div>
+    <div class="form-grp">
+      <input class="form-in" id="ota-file" type="file" accept=".bin">
+      <div style="display:flex;gap:7px;margin-top:7px;">
+        <button class="btn btn-primary btn-sm" onclick="uploadOta()" data-i18n="ota_btn"></button>
+      </div>
+      <div id="ota-status" style="margin-top:7px;font-size:12px;color:var(--muted);" data-i18n="ota_hint"></div>
+    </div>
   </div>
 </div>
 
@@ -423,6 +444,16 @@ const STR={
     prompt_name:'레시피 이름:',default_name:'새 레시피',
     warn_no_steps:'단계를 먼저 추가해주세요.',warn_no_sel:'레시피를 먼저 선택해주세요.',
     warn_no_last:'레시피 탭에서 먼저 실행해주세요.',
+    warn_stop_fail:'⚠ 정지 명령이 전달되지 않았습니다! 연결 확인 후 다시 누르거나 본체 버튼으로 정지하세요.',
+    ota_title:'펌웨어 업데이트 (OTA)',ota_btn:'업로드 후 재부팅',ota_hint:'firmware.bin 선택. 모터 정지 상태에서만 가능. 레시피는 유지됩니다.',
+    ota_choose:'firmware.bin 파일을 선택하세요.',ota_confirm:'펌웨어를 업데이트하고 재부팅합니다. 진행할까요?',
+    save_wait:'⏸ 저장 대기 — 모터 정지 후 자동 저장',save_ing:'저장 중…',save_ok:'✓ 보드에 저장됨',
+    save_retry:'연결 끊김 — 재시도 중',save_fail:'⚠ 저장 실패 — 페이지를 닫지 마세요',
+    err_busy_save:'모터 동작/레시피 진행 중에는 설정을 저장할 수 없습니다. 정지 후 다시 시도하세요.',
+    board_id:'보드 번호',board_id_hint:'여러 대 운용 시 보드마다 다르게. 1번=192.168.4.1, 2번=5.1, 3번=6.1 (저장 후 재부팅)',
+    multi_link:'멀티 보드 제어 열기',goto_hint:'단계를 누르면 이동',goto_fail:'단계 이동 실패',
+    goto_confirm:'{n}단계 "{s}"(으)로 이동할까요?\n현재 단계를 감속 정지한 뒤 이동합니다.',
+    ota_up:'업로드 중',ota_ok:'완료 — 재부팅 중. 약 10초 후 페이지를 새로고침하세요.',ota_fail:'실패',
     saved_ok:'저장됨. 재시작 중... 새 네트워크에 접속하세요.',err_ssid:'SSID를 입력해주세요.',
     dir_fwd:'순방향 ▶',dir_rev:'◀ 역방향',dir_rest:'방향전환',dir_idle:'정지',
     co_done_last:'🎉 레시피 완료!',co_done_step:'✅ 단계 완료',
@@ -462,6 +493,16 @@ const STR={
     prompt_name:'Recipe name:',default_name:'New Recipe',
     warn_no_steps:'Add steps first.',warn_no_sel:'Select a recipe first.',
     warn_no_last:'Select and run a recipe from the Recipe tab.',
+    warn_stop_fail:'⚠ Stop command NOT delivered! Check connection and retry, or stop from the device.',
+    ota_title:'Firmware Update (OTA)',ota_btn:'Upload & Reboot',ota_hint:'Select firmware.bin. Motor must be stopped. Recipes are kept.',
+    ota_choose:'Select a firmware.bin file.',ota_confirm:'Update firmware and reboot?',
+    save_wait:'⏸ Save pending — saves when the motor stops',save_ing:'Saving…',save_ok:'✓ Saved to device',
+    save_retry:'Connection lost — retrying',save_fail:'⚠ Save failed — keep this page open',
+    err_busy_save:'Cannot save settings while the motor or a recipe is running. Stop first.',
+    board_id:'Board number',board_id_hint:'Use a different number per unit. #1=192.168.4.1, #2=5.1, #3=6.1 (reboots on save)',
+    multi_link:'Open multi-board control',goto_hint:'Tap a step to jump',goto_fail:'Step jump failed',
+    goto_confirm:'Jump to step {n} "{s}"?\nThe motor decelerates to a stop first.',
+    ota_up:'Uploading',ota_ok:'Done — rebooting. Refresh this page in ~10 s.',ota_fail:'Failed',
     saved_ok:'Saved. Restarting...',err_ssid:'Please enter an SSID.',
     dir_fwd:'Forward ▶',dir_rev:'◀ Reverse',dir_rest:'Switching',dir_idle:'Idle',
     co_done_last:'🎉 Recipe Complete!',co_done_step:'✅ Step Done',
@@ -491,12 +532,32 @@ async function loadR(){
     return d;
   }catch{return mkE();}
 }
-let _saveTimer=null;
+// 레시피 저장 — 편집 내용 유실 방지:
+//   · 800ms 디바운스 (빠른 타이핑 중 플래시 쓰기 반복 방지)
+//   · 모터 동작/레시피 진행 중엔 보내지 않고 '저장 대기' → 정지되면 자동 저장
+//     (보드도 409로 거부함 — 운전 중 플래시 쓰기 = 모터 덜컹 위험)
+//   · 409(동작 중/다른 기기 저장 중)·네트워크 오류는 3초 후 재시도, 그 외 실패는 경고
+//   · 저장 대기 중 페이지 이탈 시 브라우저 경고
+let _saveTimer=null,_savePending=false,_saveBusy=false;
+function boardBusy(){return sd.recipeRun||sd.recipePause||sd.waitConfirm||sd.manualMode||sd.motorDir!=='IDLE';}
+function setSaveSt(k,cls){const e=document.getElementById('save-st');if(!e)return;e.textContent=k?t(k):'';e.style.color=cls==='warn'?'var(--danger,#d6336c)':cls==='ok'?'var(--ok,#2f9e44)':'var(--muted)';}
 function saveR(d){
+  _savePending=true;setSaveSt(boardBusy()?'save_wait':'save_ing');
   clearTimeout(_saveTimer);
-  // 800ms 디바운스: 빠른 타이핑 중 불필요한 플래시 쓰기 방지
-  _saveTimer=setTimeout(()=>postJ('/api/recipes/save',d),800);
+  _saveTimer=setTimeout(flushSave,800);
 }
+async function flushSave(){
+  if(!_savePending||_saveBusy)return;
+  if(boardBusy()){setSaveSt('save_wait');_saveTimer=setTimeout(flushSave,2000);return;}
+  _saveBusy=true;setSaveSt('save_ing');
+  let r=null;try{r=await postJ('/api/recipes/save',recipes);}catch(e){}
+  _saveBusy=false;
+  if(r&&r.ok){_savePending=false;setSaveSt('save_ok','ok');setTimeout(()=>{if(!_savePending)setSaveSt('');},2000);return;}
+  if(!r||r.status===409){setSaveSt(r?'save_wait':'save_retry','warn');_saveTimer=setTimeout(flushSave,3000);return;}
+  let j={};try{j=await r.json();}catch(e){}
+  setSaveSt('save_fail','warn');alert(t('save_fail')+' ('+(j.error||r.status)+')');
+}
+window.addEventListener('beforeunload',e=>{if(_savePending){e.preventDefault();e.returnValue='';}});
 let recipes=mkE(),activeCat=CATS[0],selIdx=-1,lastRun=null;
 
 function renderCatTabs(){
@@ -549,8 +610,11 @@ async function runSelectedRecipe(){
 async function startLastRecipe(){if(!lastRun){alert(t('warn_no_last'));return;}await postJ('/api/start',lastRun);}
 
 let sd={motorRpm:0,motorDir:'IDLE',recipeRun:false,recipePause:false,waitConfirm:false,recipeName:'',stepName:'',stepNext:'',totalSteps:0,stepIdx:0,stepDurSec:0,stepRemSec:0,manualMode:false,staConn:false,staIP:'',temperature:-999,tempFault:false};
-setInterval(fetchStatus,500);
-async function fetchStatus(){try{const r=await fetch('/api/status');sd=await r.json();updateStatusUI();}catch(e){}}
+// 폴링: 이전 응답 완료 후 500ms 뒤 다음 요청(적체 방지) + 2초 타임아웃 + 백그라운드 탭 중지.
+// 동시 1건만 — 명령 후 fetchStatus() 호출이 겹쳐도 연결 슬롯을 점유하지 않음.
+let stBusy=false;
+async function fetchStatus(){if(stBusy)return;stBusy=true;const ac=new AbortController();const to=setTimeout(()=>ac.abort(),2000);try{const r=await fetch('/api/status',{signal:ac.signal});sd=await r.json();updateStatusUI();}catch(e){}finally{clearTimeout(to);stBusy=false;}}
+(function poll(){(document.hidden?Promise.resolve():fetchStatus()).finally(()=>setTimeout(poll,500));})();
 
 function updateStatusUI(){
   document.getElementById('s-pct').innerHTML=sd.motorRpm+'<span>RPM</span>';
@@ -594,25 +658,52 @@ function updateStatusUI(){
   const chip=document.getElementById('sta-chip'),ipRow=document.getElementById('sta-ip-row');
   if(sd.staConn){chip.className='chip chip-ok';chip.textContent=t('sta_conn');ipRow.style.display='';document.getElementById('sta-ip-val').textContent=sd.staIP||'—';}
   else{chip.className='chip chip-off';chip.textContent=t('sta_disconn');ipRow.style.display='none';}
+  if(sd.fw){
+    const kb=v=>(v/1024).toFixed(1);const u=sd.upSec|0;
+    document.getElementById('ab-fw').textContent=sd.fw;
+    document.getElementById('ab-up').textContent=Math.floor(u/3600)+'h '+String(Math.floor(u/60)%60).padStart(2,'0')+'m';
+    document.getElementById('ab-heap').textContent=kb(sd.heapFree)+' / '+kb(sd.heapMin)+' / '+kb(sd.heapMax)+' KB';
+    document.getElementById('ab-guard').textContent=sd.guard+' (reset '+sd.resetReason+')';
+  }
 }
 
+// 실행 중 레시피 단계 목록 — 보드에서 받아옴(/api/recipe). 다른 폰에서 시작한 레시피도 이름/비율 표시.
+let curRec=null,curRecKey='';
+async function syncRecipe(d){
+  const k=d.recipeRun?d.recipeName+'|'+d.totalSteps:'';
+  if(k===curRecKey)return;
+  curRecKey=k;curRec=null;
+  if(!k)return;
+  try{const j=await (await fetch('/api/recipe')).json();if(curRecKey===k)curRec=j;}catch(e){curRecKey='';}
+}
 function renderTimeline(d){
   const tl=document.getElementById('s-timeline'),hint=document.getElementById('s-tl-hint');
+  syncRecipe(d);
   if(!d.recipeRun||!d.totalSteps){tl.innerHTML='<div style="flex:1;background:var(--border);border-radius:8px;"></div>';hint.textContent='';return;}
-  const steps=(lastRun&&lastRun.steps.length===d.totalSteps)?lastRun.steps:null;
-  const total=steps?steps.reduce((a,s)=>a+s.durationSec,0):d.totalSteps;
+  const steps=(curRec&&curRec.steps.length===d.totalSteps)?curRec.steps:null;
+  const total=steps?steps.reduce((a,s)=>a+s.durSec,0):d.totalSteps;
   tl.innerHTML=Array.from({length:d.totalSteps},(_,i)=>{
     const cls=i<d.stepIdx?'done':i===d.stepIdx?'current':'pending';
-    const w=steps?(steps[i].durationSec/total*100).toFixed(1)+'%':(100/d.totalSteps).toFixed(1)+'%';
-    const lbl=steps?(steps[i].name.length>7?steps[i].name.slice(0,6)+'…':steps[i].name):(i+1);
-    return `<div class="t-seg sc${i%8} ${cls}" style="flex:0 0 ${w}">${lbl}</div>`;
+    const w=steps?(steps[i].durSec/total*100).toFixed(1)+'%':(100/d.totalSteps).toFixed(1)+'%';
+    const lbl=steps?escH(steps[i].name.length>7?steps[i].name.slice(0,6)+'…':steps[i].name):(i+1);
+    return `<div class="t-seg sc${i%8} ${cls}" style="flex:0 0 ${w};cursor:pointer" onclick="gotoStepUI(${i})">${lbl}</div>`;
   }).join('');
-  if(steps&&d.stepIdx<steps.length) hint.textContent=`${d.stepIdx+1}/${d.totalSteps}: ${steps[d.stepIdx].name}`;
+  hint.textContent=steps&&d.stepIdx<steps.length?`${d.stepIdx+1}/${d.totalSteps}: ${steps[d.stepIdx].name}  ·  ${t('goto_hint')}`:t('goto_hint');
+}
+function escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// 진행도 바 단계 클릭 → 확인 → 해당 단계로 이동 (현재 단계는 즉시 종료)
+async function gotoStepUI(i){
+  const nm=curRec&&curRec.steps[i]?curRec.steps[i].name:String(i+1);
+  if(!confirm(t('goto_confirm').replace('{n}',i+1).replace('{s}',nm)))return;
+  try{const r=await postJ('/api/goto',{step:i});if(!r.ok)throw 0;}catch(e){alert(t('goto_fail'));}
+  fetchStatus();
 }
 
 async function togglePause(){await fetch('/api/pause',{method:'POST'});fetchStatus();}
-async function doStop(){await fetch('/api/stop',{method:'POST'});fetchStatus();}
-async function doSafeStop(){await fetch('/api/safestop',{method:'POST'});fetchStatus();}
+// 정지류는 반복 전송해도 결과 동일(idempotent) → 1.5초 타임아웃 × 최대 5회 재시도, 끝내 실패하면 경고.
+async function postStop(url){for(let i=0;i<5;i++){const ac=new AbortController();const to=setTimeout(()=>ac.abort(),1500);try{const r=await fetch(url,{method:'POST',signal:ac.signal});if(r.ok){fetchStatus();return;}}catch(e){}finally{clearTimeout(to);}await new Promise(res=>setTimeout(res,200));}alert(t('warn_stop_fail'));}
+async function doStop(){await postStop('/api/stop');}
+async function doSafeStop(){await postStop('/api/safestop');}
 async function doSkip(){await fetch('/api/skip',{method:'POST'});fetchStatus();}
 async function doConfirm(){await fetch('/api/confirm',{method:'POST'});fetchStatus();}
 
@@ -645,6 +736,9 @@ async function loadSettings(){
     const r=await fetch('/api/settings');const d=await r.json();
     document.getElementById('set-ap-ssid').value=d.apSSID||'';
     document.getElementById('set-sta-ssid').value=d.staSSID||'';
+    document.getElementById('set-board-id').value=String(d.boardId||1);
+    document.getElementById('ap-ip-val').textContent=d.apIP||'—';
+    document.getElementById('host-val').textContent=(d.hostName||'europrocessor')+'.local';
     const st=d.staStatic||false;
     document.getElementById('set-sta-static').checked=st;
     document.getElementById('set-sta-ip').value=d.staStaticIP||'192.168.1.100';
@@ -658,16 +752,21 @@ async function saveSettings(){
   const apSSID=document.getElementById('set-ap-ssid').value.trim();
   if(!apSSID){alert(t('err_ssid'));return;}
   const staStatic=document.getElementById('set-sta-static').checked;
-  await postJ('/api/settings',{
+  if(boardBusy()){alert(t('err_busy_save'));return;}
+  let r=null;
+  try{r=await postJ('/api/settings',{
     apSSID,apPass:document.getElementById('set-ap-pass').value,
     staSSID:document.getElementById('set-sta-ssid').value.trim(),
+    boardId:parseInt(document.getElementById('set-board-id').value,10),
     staPass:document.getElementById('set-sta-pass').value,
     staStatic,
     staStaticIP:document.getElementById('set-sta-ip').value.trim(),
     staGW:document.getElementById('set-sta-gw').value.trim(),
     staSN:document.getElementById('set-sta-sn').value.trim(),
     staDNS:document.getElementById('set-sta-dns').value.trim()
-  });
+  });}catch(e){}
+  if(r&&r.status===409){alert(t('err_busy_save'));return;}
+  if(!r||!r.ok){alert(t('save_fail'));return;}
   alert(t('saved_ok'));
 }
 
@@ -1024,6 +1123,19 @@ async function uploadSaverImage(){
     if(r.ok){st.textContent=t('saver_ok');loadSaver();}
     else    {st.textContent=t('saver_fail');}
   }catch(e){console.error('[saver] transcode/upload 실패',e);st.textContent=t('saver_fail');}
+}
+// OTA — XHR(업로드 진행률). X-OTA 헤더는 서버의 CSRF 차단 조건.
+function uploadOta(){
+  const inp=document.getElementById('ota-file');
+  if(!inp.files||!inp.files[0]||!inp.files[0].name.toLowerCase().endsWith('.bin')){alert(t('ota_choose'));return;}
+  if(!confirm(t('ota_confirm')))return;
+  const st=document.getElementById('ota-status');
+  const fd=new FormData();fd.append('firmware',inp.files[0],inp.files[0].name);
+  const x=new XMLHttpRequest();x.open('POST','/api/ota');x.setRequestHeader('X-OTA','1');
+  x.upload.onprogress=e=>{if(e.lengthComputable)st.textContent=t('ota_up')+' '+Math.round(e.loaded*100/e.total)+'%';};
+  x.onload=()=>{let j={};try{j=JSON.parse(x.responseText);}catch(e){}st.textContent=x.status===200?t('ota_ok'):t('ota_fail')+' ('+(j.error||x.status)+')';};
+  x.onerror=()=>{st.textContent=t('ota_fail');};
+  x.send(fd);
 }
 async function deleteSaverImage(){
   await fetch('/api/saver/image',{method:'DELETE'});
