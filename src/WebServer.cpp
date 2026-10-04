@@ -8,6 +8,9 @@
 #include <Update.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <esp_wifi.h>
+#include <esp_netif.h>
+#include <esp_netif_sta_list.h>
 
 // send()는 응답을 저장만 하고 전송은 핸들러 반환 후 — 핸들러 안에서 restart 하면 응답 유실.
 // 1초 뒤 별도 태스크로 재시작.
@@ -77,6 +80,16 @@ String WebServer::buildStatus() {
     doc["staIP"]   = WifiManager::staIP();
 
     doc["guard"]       = _d.guard->status();      // ok / noise / locked
+    doc["hwFault"]     = HwSafety::text(_d.hw->fault());   // "" / driver / vm_low / vm_high
+    if (_d.hw->hasVm()) doc["vm"] = _d.hw->vm();
+    {   // 정전·리셋 복구 대기
+        RecoveryInfo r = _d.recipe->recovery();
+        if (r.valid) {
+            JsonObject o = doc["recovery"].to<JsonObject>();
+            o["name"] = r.name; o["step"] = r.stepIdx; o["total"] = r.total; o["stepName"] = r.stepName;
+            o["stepDurSec"] = r.stepDurSec; o["elapsedSec"] = r.elapsedMs / 1000; o["state"] = r.state;
+        }
+    }
     doc["resetReason"] = _d.guard->resetReason();
 
     // 장시간 운전 진단 — 내부 RAM(lwIP/AsyncTCP 영역). free·largest가 계속 줄면 누수/단편화
@@ -226,6 +239,56 @@ void WebServer::setupRoutes() {
     );
 
     // ── WiFi 설정 ──
+    // ── 동시 제어용 피어 탐색: 이 보드 AP에 붙은 기기들의 IP ──
+    //   폰/PC도 섞여 있음 → 브라우저가 각 IP의 /api/status로 프로세서인지 확인.
+    //   슬레이브는 DHCP로 붙어도 됨 (고정 IP 불필요).
+    _server.on("/api/peers", HTTP_GET, [](AsyncWebServerRequest* req){
+        JsonDocument doc;
+        JsonArray arr = doc["ap"].to<JsonArray>();
+        wifi_sta_list_t wl{};
+        esp_netif_sta_list_t nl{};
+        int noIp = 0;   // IP 모르는 기기 — DHCP 전이거나 고정 IP(마스터가 IP를 할당하지 않음)
+        if (esp_wifi_ap_get_sta_list(&wl) == ESP_OK && esp_netif_get_sta_list(&wl, &nl) == ESP_OK) {
+            for (int i = 0; i < nl.num; ++i) {
+                if (nl.sta[i].ip.addr == 0) { noIp++; continue; }
+                arr.add(IPAddress(nl.sta[i].ip.addr).toString());
+            }
+        }
+        doc["noIp"] = noIp;
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // ── 정전 복구 선택: {"action":"resume"|"restart"|"next"|"discard"} ──
+    _server.on("/api/recovery", HTTP_POST,
+        [](AsyncWebServerRequest*){}, nullptr,
+        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t){
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"ok\":false}"); return; }
+            const String a = doc["action"] | String("");
+            RecoverAction act;
+            if      (a == "resume")  act = RecoverAction::RESUME;
+            else if (a == "restart") act = RecoverAction::RESTART_STEP;
+            else if (a == "next")    act = RecoverAction::NEXT_STEP;
+            else if (a == "discard") act = RecoverAction::DISCARD;
+            else { req->send(400, "application/json", "{\"ok\":false,\"error\":\"bad action\"}"); return; }
+            if (!_d.recipe->recoveryPending()) { req->send(409, "application/json", "{\"ok\":false,\"error\":\"no recovery\"}"); return; }
+            if (act != RecoverAction::DISCARD && motorBusy()) { req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor running\"}"); return; }
+            if (act != RecoverAction::DISCARD && (_d.hw->fault() || _d.guard->motorLocked())) {
+                req->send(409, "application/json", "{\"ok\":false,\"error\":\"motor locked\"}"); return;
+            }
+            Cmd c{}; c.type = CmdType::RECOVER; c.step = (int)act;
+            const bool ok = _d.cmd->enqueue(c);
+            req->send(ok ? 200 : 503, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        }
+    );
+    // ── 하드웨어 고장 해제 (원인이 사라졌을 때만 실제 해제 — Core 1이 재확인) ──
+    _server.on("/api/hwfault/clear", HTTP_POST, [this](AsyncWebServerRequest* req){
+        Cmd c{}; c.type = CmdType::HW_CLEAR;
+        const bool ok = _d.cmd->enqueue(c);
+        req->send(ok ? 200 : 503, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+    });
+
     // ── 온도 보정 저장: {"gain":g,"offset":Ω} 또는 {"reset":true} ──
     //   계산은 웹이 함(기준온도 → PT100 저항, 측정저항 rtdOhm과 선형 맞춤). NVS 쓰기라 운전 중 거부.
     _server.on("/api/temp/cal", HTTP_POST,
@@ -287,12 +350,8 @@ void WebServer::setupRoutes() {
         doc["staSSID"]     = s.staSSID;
         doc["staConn"]     = WifiManager::staConnected();
         doc["staIP"]       = WifiManager::staIP();
-        doc["staStatic"]   = s.staStatic;
-        doc["staStaticIP"] = s.staStaticIP;
-        doc["staGW"]       = s.staGW;
-        doc["staSN"]       = s.staSN;
-        doc["staDNS"]      = s.staDNS;
         doc["boardId"]     = s.boardId;
+        doc["apNameValid"] = WifiManager::isValidApName(s.apSSID);   // false면 UI가 SSID 변경 권장
         doc["apIP"]        = _d.wifi->apIP().toString();
         doc["hostName"]    = _d.wifi->hostName();
         String out; serializeJson(doc, out); req->send(200, "application/json", out);
@@ -309,17 +368,16 @@ void WebServer::setupRoutes() {
                 req->send(400, "application/json", "{\"ok\":false}"); return;
             }
             WifiSettings& s = _d.wifi->settings();
-            // 빈/32자 초과 SSID, 63자 초과 비번 → softAP 기동 실패 = AP 접속 불가(복구엔 재플래시). 거부.
+            // AP SSID = 접속 이름(이름.local) → mDNS 호스트 규칙 강제. 기존 값 그대로 보내면(규칙 밖이어도) 허용 —
+            // 이전 SSID를 쓰는 슬레이브·폰 연결을 끊지 않게. 바꿀 때만 규칙 검사.
             String newApSSID = doc["apSSID"] | s.apSSID;
-            if (newApSSID.length() >= 1 && newApSSID.length() <= 32) s.apSSID = newApSSID;
+            if (newApSSID != s.apSSID && !WifiManager::isValidApName(newApSSID)) {
+                req->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid ssid\"}"); return;
+            }
+            s.apSSID = newApSSID;
             String newApPass  = doc["apPass"]  | String("");
             s.staSSID = doc["staSSID"] | String("");
             String newStaPass = doc["staPass"] | String("");
-            s.staStatic   = doc["staStatic"]   | false;
-            s.staStaticIP = doc["staStaticIP"] | String("192.168.1.100");
-            s.staGW       = doc["staGW"]       | String("192.168.1.1");
-            s.staSN       = doc["staSN"]       | String("255.255.255.0");
-            s.staDNS      = doc["staDNS"]      | String("8.8.8.8");
             if (doc["boardId"].is<int>()) s.boardId = constrain(doc["boardId"].as<int>(), 1, 9);
             // 비밀번호: 8자 이상일 때만 갱신 (빈 값이면 기존 유지)
             if (newApPass.length()  >= 8 && newApPass.length()  <= 63) s.apPass  = newApPass;

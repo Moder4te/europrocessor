@@ -28,6 +28,7 @@
 #include "WebServer.h"
 #include "RecipeStage.h"
 #include "NoiseGuard.h"
+#include "HwSafety.h"
 
 #include "ISaver.h"
 #if UI_DISPLAY_PRESENT
@@ -43,6 +44,7 @@ static RecipeStage       stage;     // 웹/디스플레이 → loop 레시피 �
 static WifiManager       wifi;
 static WebServer         web;
 static NoiseGuard        guard;
+static HwSafety          hw;
 
 #if UI_DISPLAY_PRESENT
   static DisplayUI display;
@@ -80,6 +82,15 @@ static void noiseStop() {
     if (recipe.running() && !recipe.paused() && !recipe.waitConfirm()) recipe.pauseToggle();
     else if (motion.state() != MotorState::IDLE)                        safeStop();
 }
+// 모터 잠금 = 부팅 크래시루프 잠금(가드) 또는 하드웨어 고장 래치
+static void applyLock() { motion.setLocked(guard.motorLocked() || hw.fault()); }
+
+// 하드웨어 고장 — 코일 즉시 차단(감속 불가: 드라이버/전원 이상), 레시피는 일시정지로 보존(복구 가능)
+static void hwFaultStop() {
+    recipe.forcePause();
+    motion.stopImmediate();
+    applyLock();
+}
 static void dispatch(const Cmd& c) {
     switch (c.type) {
         case CmdType::STOP:         stopAll();                                  break;
@@ -89,6 +100,12 @@ static void dispatch(const Cmd& c) {
         case CmdType::SAFE_STOP:    safeStop();                                 break;
         case CmdType::SKIP_STEP:    recipe.skipStep();                          break;
         case CmdType::GOTO_STEP:    recipe.gotoStep(c.step);                    break;
+        case CmdType::RECOVER:
+            if (c.step != (int)RecoverAction::DISCARD && (guard.motorLocked() || hw.fault()))
+                Serial.println("[Recover] 모터 잠금/고장 상태 — 복구 실행 거부");
+            else recipe.applyRecovery((RecoverAction)c.step);
+            break;
+        case CmdType::HW_CLEAR:     if (hw.clear()) applyLock();               break;
     }
 }
 
@@ -197,7 +214,8 @@ void setup() {
     guard.begin();       // 리셋 원인 집계 → 연속 비정상 리셋 시 모터 잠금
     otaRollbackIfCrashLoop();
     motion.begin();      // 스테퍼 엔진 (EN은 safePinInit에서 이미 차단)
-    motion.setLocked(guard.motorLocked());
+    hw.begin();          // DIAG / VM 감시 (PinMap에 배선된 보드만)
+    applyLock();
     Serial.printf("[Stepper] MAX_SPEED=%.0f steps/s (출력축 최대 %.0f RPM)\n",
                   (float)Cfg::MAX_SPEED, (float)Cfg::MAX_OUTPUT_RPM);
     recipe.begin();
@@ -212,7 +230,7 @@ void setup() {
     // 웹 서버 — 의존성 주입
     WebServer::Deps wd{};
     wd.motion = &motion; wd.recipe = &recipe; wd.temp = &temp;
-    wd.cmd = &cmd; wd.wifi = &wifi; wd.stage = &stage; wd.guard = &guard;
+    wd.cmd = &cmd; wd.wifi = &wifi; wd.stage = &stage; wd.guard = &guard; wd.hw = &hw;
     wd.saver = &nullSaver;
 #if UI_DISPLAY_PRESENT
     if (displayActive()) wd.saver = &display;
@@ -223,7 +241,7 @@ void setup() {
 
 #if UI_DISPLAY_PRESENT
     if (displayActive()) {
-        DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd, &stage, &guard };
+        DisplayUI::Deps dd{ &motion, &recipe, &temp, &cmd, &stage, &guard, &hw };
         display.begin(dd);
         display.start();
         Serial.println("[Core] DisplayTask → Core 0 시작\n");
@@ -245,6 +263,7 @@ void loop() {
     }
     guard.update();
     if (guard.takeTrip()) noiseStop();
+    if (hw.poll(motion.state() != MotorState::IDLE)) hwFaultStop();
     static bool otaConfirmed = false;   // 정상 가동 확인 → OTA 펌웨어 확정 (롤백 대상 해제)
     // NVS 쓰기라 모터 정지·레시피 비활성일 때만 (운전 중 플래시 쓰기 금지 원칙)
     if (!otaConfirmed && millis() >= Cfg::GUARD_STABLE_MS &&

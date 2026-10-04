@@ -33,7 +33,9 @@ enum class CmdType : uint8_t {
     MANUAL,
     SAFE_STOP,     // 가속도 곡선 감속 후 정지
     SKIP_STEP,     // 레시피 진행 중 현재 단계 건너뛰고 다음 단계
-    GOTO_STEP      // 레시피 진행 중 지정 단계(step)로 이동
+    GOTO_STEP,     // 레시피 진행 중 지정 단계(step)로 이동
+    RECOVER,       // 정전 복구 선택 (step = RecoverAction 값)
+    HW_CLEAR       // 하드웨어 고장 래치 해제 (원인이 사라졌을 때만)
 };
 struct Cmd {
     CmdType type;

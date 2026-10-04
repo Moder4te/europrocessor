@@ -44,6 +44,7 @@ static TemperatureSensor* s_temp   = nullptr;
 static CommandQueue*      s_cmd    = nullptr;
 static RecipeStage*       s_stage  = nullptr;
 static NoiseGuard*        s_guard  = nullptr;
+static HwSafety*          s_hw     = nullptr;
 
 // 색상 (RGB565) — 다크 베이스 + 앰버 단일 액센트
 #define COL_BG      0x0000
@@ -480,6 +481,7 @@ static struct StatusCache {
     bool        waitConf    = false;
     bool        manual      = false;
     bool        noCycleVal  = false;
+    uint8_t     alertKey    = 0;      // 고장/복구 표시 변화 감지
     int         rotIntSec   = -1;
     int         stepIdx     = -1;
     int         stepTotal   = -1;
@@ -558,7 +560,10 @@ static void renderStatusLive() {
 
     const char* modeTxt = "IDLE";
     uint16_t    modeBg  = COL_GRAY;
-    if (s_guard->motorLocked()) { modeTxt = "LOCKED"; modeBg = COL_RED; }
+    const bool recov = s_recipe->recoveryPending();
+    if (s_hw->fault())               { modeTxt = "FAULT";   modeBg = COL_RED; }
+    else if (s_guard->motorLocked()) { modeTxt = "LOCKED"; modeBg = COL_RED; }
+    else if (recov && !running)      { modeTxt = "RESUME?"; modeBg = COL_AMBER; }
     else if (s_inputBlocked)    { modeTxt = "NOISE";  modeBg = COL_RED; }
     else if (waitConf) { modeTxt = "CONFIRM"; modeBg = COL_AMBER; }
     else if (paused)   { modeTxt = "PAUSE";   modeBg = COL_AMBER; }
@@ -580,7 +585,8 @@ static void renderStatusLive() {
         || g_sCache.noCycleVal != noCyc    || g_sCache.rotIntSec != rotInt
         || g_sCache.stepIdx    != stepIdx  || g_sCache.stepTotal != stepTotal
         || g_sCache.recName    != recName  || g_sCache.curName   != curName
-        || g_sCache.nxtName    != nxtName;
+        || g_sCache.nxtName    != nxtName
+        || g_sCache.alertKey   != (uint8_t)((s_hw->fault() ? 2 : 0) | (recov ? 1 : 0));
     const bool dRem = force
         || g_sCache.running != running || g_sCache.stepDur != stepDur || g_sCache.stepRem != stepRem;
 
@@ -677,8 +683,16 @@ static void renderStatusLive() {
             snprintf(buf, sizeof(buf), "Cycle %s   Period %ds", noCyc ? "OFF" : "ON", rotInt);
             drawKText(10, 132, buf, COL_GRAY, COL_BG);
         } else {
-            drawKText(10, 114, "Ready", COL_GRAY, COL_BG);
-            drawKText(10, 132, "Run recipes from menu or web UI", COL_DGRAY, COL_BG);
+            if (s_hw->fault()) {
+                drawKText(10, 114, String("HW fault: ") + HwSafety::text(s_hw->fault()), COL_RED, COL_BG);
+                drawKText(10, 132, "Motor locked - check, then clear on web", COL_GRAY, COL_BG);
+            } else if (recov) {
+                drawKText(10, 114, "Unfinished recipe (power loss)", COL_AMBER, COL_BG);
+                drawKText(10, 132, "Choose resume/discard on web UI", COL_GRAY, COL_BG);
+            } else {
+                drawKText(10, 114, "Ready", COL_GRAY, COL_BG);
+                drawKText(10, 132, "Run recipes from menu or web UI", COL_DGRAY, COL_BG);
+            }
         }
     }
     // 9) 남은 시간 + 단계 진행바
@@ -714,6 +728,7 @@ static void renderStatusLive() {
     g_sCache.stepDur = stepDur; g_sCache.stepRem = stepRem;
     g_sCache.recName = recName; g_sCache.curName = curName; g_sCache.nxtName = nxtName;
     g_sCache.modeTxt = modeTxt; g_sCache.hint = hint;
+    g_sCache.alertKey = (uint8_t)((s_hw->fault() ? 2 : 0) | (recov ? 1 : 0));
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1352,6 +1367,7 @@ void DisplayUI::begin(const Deps& deps) {
     s_cmd    = deps.cmd;
     s_stage  = deps.stage;
     s_guard  = deps.guard;
+    s_hw     = deps.hw;
     loadSaverPrefs();
 }
 

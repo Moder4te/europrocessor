@@ -15,7 +15,7 @@
 #endif
 
 namespace Cfg {
-    constexpr const char* FW_VERSION = "v4.8.1";
+    constexpr const char* FW_VERSION = "v4.9.3";
 
     // 모터 — 마이크로스텝 8 (MS1=LOW, MS2=LOW) → 1600 step/rev
     constexpr int   STEPS_PER_REV = 1600;        // 200 × 8
@@ -73,6 +73,12 @@ namespace Cfg {
     //   STABLE_MS 이상 정상 가동하면 카운터 리셋.
     constexpr uint8_t  GUARD_BAD_RESETS = 3;
     constexpr uint32_t GUARD_STABLE_MS  = 60000;
+
+    // ── 하드웨어 감시 (HwSafety, PinMap에 diagPin/vmPin 배선 시) ──
+    constexpr uint8_t  DIAG_DEBOUNCE   = 3;      // DIAG HIGH 연속 N회(20ms 간격) → 드라이버 고장
+    constexpr float    VM_MIN_V        = 10.5f;  // 구동 중 이보다 낮으면 정지 (12V 배터리도 허용)
+    constexpr float    VM_MAX_V        = 28.0f;  // 이보다 높으면 즉시 차단 (TMC2209 절대최대 29V)
+    constexpr uint32_t VM_LOW_GRACE_MS = 500;    // 저전압 지속 시간 (가속 순간 처짐 무시)
 
     // 웹 JSON 본문 상한 — 비정상 Content-Length로 힙 고갈 방지
     constexpr size_t MAX_JSON_BODY = 16384;

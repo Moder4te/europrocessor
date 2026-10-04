@@ -41,6 +41,10 @@ struct BoardPins {
     PinMap      pins;
     bool        hasDisplay;  // false = TFT·인코더·버튼 없음 → 해당 핀 미사용(구동 안 함), 화면 태스크 미기동
     uint8_t     rtdWires;    // MAX31865 PT100 결선: 0 = 센서 없음/격리(미초기화), 2/3/4 = 결선 (★보드 솔더점퍼와 일치★)
+    // ── 하드웨어 감시 (배선했을 때만, 0 = 없음) ──
+    uint8_t     diagPin;     // TMC2209 DIAG (HIGH = 과열·단락 등 드라이버 고장) — 외부 10k 풀다운 권장
+    uint8_t     vmPin;       // 모터 전원 VM 분압 ADC 핀 (ADC1: GPIO1~10만)
+    float       vmRatio;     // 분압비 (예: 100k/10k → 11.0) — VM = 핀전압 × vmRatio
 };
 
 // ★보드별 배치 — 배선이 기본과 다른 보드만 추가★
@@ -57,6 +61,9 @@ const char*   pinProfileLabel();
 const char*   boardMac();          // "AA:BB:CC:DD:EE:FF"
 bool          boardHasDisplay();   // 미등록 보드는 true (기본 배선 = 디스플레이 버전)
 uint8_t       boardRtdWires();     // 0 = 온도센서 미사용. 미등록 보드는 0 (안전)
+uint8_t       boardDiagPin();      // 0 = 미배선
+uint8_t       boardVmPin();        // 0 = 미배선
+float         boardVmRatio();
 
 // ── 컴파일 타임 검증 (C++11 constexpr — 재귀) ─────────────────────
 namespace pinmap_check {
@@ -88,8 +95,18 @@ namespace pinmap_check {
     }
     constexpr int COUNT = sizeof(BOARDS) / sizeof(BOARDS[0]);
     constexpr bool wiresOk(uint8_t w) { return w == 0 || w == 2 || w == 3 || w == 4; }
+    constexpr bool inPins(const PinMap& m, int n, uint8_t p, int i = 0) {
+        return i >= n ? false : (at(m, i) == p || inPins(m, n, p, i + 1));
+    }
+    // 감시 핀: 0(없음) 또는 금지 GPIO 아님 + 기존 핀과 안 겹침. VM은 ADC1(1~10) + 분압비 > 1, DIAG와도 안 겹침
+    constexpr bool extraOk(const BoardPins& b) {
+        return (b.diagPin == 0 || (!forbidden(b.diagPin) && !inPins(b.pins, b.hasDisplay ? N : N_CORE, b.diagPin)))
+            && (b.vmPin == 0 || (b.vmPin >= 1 && b.vmPin <= 10 && b.vmRatio > 1.0f && b.vmPin != b.diagPin
+                                 && !inPins(b.pins, b.hasDisplay ? N : N_CORE, b.vmPin)));
+    }
     constexpr bool allValid(int i = 0) {
-        return i >= COUNT ? true : (valid(BOARDS[i].pins, BOARDS[i].hasDisplay) && wiresOk(BOARDS[i].rtdWires) && allValid(i + 1));
+        return i >= COUNT ? true : (valid(BOARDS[i].pins, BOARDS[i].hasDisplay) && wiresOk(BOARDS[i].rtdWires)
+                                    && extraOk(BOARDS[i]) && allValid(i + 1));
     }
 }
 static_assert(pinmap_check::valid(DEFAULT_PINS),

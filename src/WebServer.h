@@ -18,6 +18,7 @@
 #include "RecipeStage.h"
 #include "ISaver.h"
 #include "NoiseGuard.h"
+#include "HwSafety.h"
 
 class WebServer {
 public:
@@ -30,6 +31,7 @@ public:
         ISaver*            saver;
         RecipeStage*       stage;
         NoiseGuard*        guard;
+        HwSafety*          hw;
     };
 
     void begin(const Deps& deps);

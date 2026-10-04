@@ -1,7 +1,7 @@
 # 현존 이슈 정리 — 2026-10-04
 
-대상: `rotary_processor` 펌웨어 v4.3 → **v4.8.1** (바디1·바디2 OTA 배포 완료)
-기본 사용 환경: **집 WiFi 없음, 폰이 보드 AP에 직접 접속**. 현재 구성: 바디1이 바디2 AP(`FilmProcessor`, 192.168.5.1)에 STA(192.168.5.11)로 연결, 폰은 바디2 AP → `/multi`로 2대 제어
+대상: `rotary_processor` 펌웨어 v4.3 → **v4.9.3** (바디1·바디2 OTA 배포 완료)
+기본 사용 환경: **집 WiFi 없음, 폰이 보드 AP에 직접 접속**. 현재 구성: 바디1이 바디2 AP(`FilmProcessor`, 192.168.5.1)에 STA(DHCP)로 연결, 폰은 바디2 AP → 상태 탭 "동시 제어"로 2대 제어
 
 우선순위: 🔴 즉시 / 🟠 다음 업데이트 / 🟡 여유 있을 때
 
@@ -76,7 +76,7 @@
 
 ---
 
-## 4. v4.4~v4.8.1 변경 이력 (커밋 완료, 항목별 실기 검증 여부는 각 행·5장 참고)
+## 4. v4.4~v4.9 변경 이력 (커밋 완료, 항목별 실기 검증 여부는 각 행·5장 참고)
 
 빌드: RAM 16.8% / Flash 45.7%
 
@@ -107,6 +107,10 @@
 | **v4.7.3~4 WiFi 검색**: `/api/wifi/scan`(비동기, 15초 캐시, 같은 SSID 병합, 신호순) + 설정 화면 "검색" 버튼 → 목록 선택 시 SSID 자동 입력. STA 접속 시 내부 검색 결과(0개)를 오인하던 첫 검색 버그 수정 | `WebServer.*`, `web_assets.h` |
 | **v4.7.5~8 온도센서 보드별 설정**: 전역 `TEMP_SENSOR_PRESENT=false`(바디1 불량 보드 격리)가 바디2까지 끄던 문제 → `PinMap.h` `rtdWires`(0=격리, 2/3/4) 보드별. 상태 API `tempFaultCode`·`rtdWires` 추가. 유효범위(-20~100°C) 밖은 fault 0x02 | `PinMap.*`, `TemperatureSensor.cpp`, `WebServer.cpp`, `Config.h` |
 | **v4.8~4.8.1 온도 보정**: 측정저항 선형 보정(R_cal = gain·R + offset, NVS "tcal" 보드별, 범위 gain 0.85~1.15/offset ±20Ω). 웹 설정 "온도 보정" 카드(점 기록 5초 평균·흔들림 0.2°C 초과 거부, 1점/2점, 마지막 점 삭제, 초기화, 실패 사유 표시). 상태 API `rtdOhm`·`calGain`·`calOffset`. 온도 계산을 CVD 직접 역산으로 교체 | `TemperatureSensor.*`, `WebServer.cpp`, `web_assets.h` |
+| **v4.9 정전·리셋 복구**: 진행 상태(단계 목록·현재 단계·경과·상태)를 NVS `rec`에 저장 — 모터가 멈춘 순간에만(단계 시작 직전·확인대기·일시정지 완료·REST 중 10초마다). 재부팅 후 자동 구동 없이 웹 배너/TFT `RESUME?` → 이어서/단계 처음부터/다음 단계/취소. 비상정지·완료 시 기록 삭제, 수동 운전은 이전 부팅 기록을 지우지 않음. `/api/recovery` | `RecipeRunner.*`, `WebServer.cpp`, `web_assets.h`, `DisplayUI.cpp` |
+| **v4.9 하드웨어 감시 (`HwSafety`)**: TMC2209 DIAG(HIGH 연속 3회) → 코일 즉시 차단 + 레시피 일시정지 보존 + 모터 잠금. VM 분압 ADC: 구동 중 <10.5V 500ms → 정지, >28V 즉시 차단. 핀은 `PinMap.h` `diagPin/vmPin/vmRatio`(0=미배선, static_assert 검증). 웹 배너/TFT `FAULT`, 원인 해소 후 `/api/hwfault/clear` | `HwSafety.*`, `PinMap.*`, `main.cpp` |
+| **v4.9.1~2 동시 제어 (기존 제어 화면 통합)**: 상태 탭 "🔗 동시 제어" 스위치 → 마스터 AP 접속 기기 자동 탐색(`/api/peers` + 각 IP `/api/status` 확인, MAC으로 기억) → 시작·정지(재시도)·안전정지·일시정지(피어 상태별)·다음 단계(확인대기 보드만)·건너뛰기·단계 이동·수동 운전 브로드캐스트. 슬레이브는 DHCP로 연결(고정 IP 불필요, 고정 IP 기기는 `noIp`로 안내). 실측: 바디1 자동 발견, 정지 전달 14ms | `WebServer.cpp`, `web_assets.h` |
+| **v4.9.3 이름.local / 고정 IP 제거**: AP SSID = 접속 이름 — 새 SSID는 mDNS 규칙(소문자·숫자·`-`, 1~32자, 하이픈 시작·끝 금지) 웹 입력 변환 + 서버 400 검증. 기존 규칙 밖 SSID는 유지하고 이름만 변환(`FilmProcessor`→`filmprocessor.local`). 자체 DNS 태스크(Core 0): 자기 이름 → AP IP, 연결된 보드 이름 → mDNS 조회 대리 응답(안드로이드 대응), 그 외 NXDOMAIN. STA 고정 IP 옵션 전면 제거(항상 DHCP). 실측: 마스터 DNS로 `filmprocessor.local`·`europrocessor-2.local` 모두 해석, HTTP 접속 확인 | `WifiManager.*`, `WebServer.cpp`, `web_assets.h` |
 | **NoiseGuard 신규**: 인코더/버튼 노이즈 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋 3회 → 모터 잠금 | `NoiseGuard.*`, `DisplayUI.cpp` |
 
 **실기 검증 시 확인할 것**

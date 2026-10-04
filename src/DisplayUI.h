@@ -14,6 +14,7 @@
 #include "CommandQueue.h"
 #include "RecipeStage.h"
 #include "NoiseGuard.h"
+#include "HwSafety.h"
 
 class DisplayUI : public ISaver {
 public:
@@ -24,6 +25,7 @@ public:
         CommandQueue*      cmd;
         RecipeStage*       stage;
         NoiseGuard*        guard;
+        HwSafety*          hw;
     };
 
     void begin(const Deps& deps);   // deps 주입 + 화면보호기 prefs 로드

@@ -111,12 +111,13 @@
 </nav>
 
 <main>
-<h1>europrocessor<span class="v">v4.8.1</span></h1>
+<h1>europrocessor<span class="v">v4.9.3</span></h1>
 <p class="lede">ESP32-S3 기반 <b>아날로그 필름 현상용 로터리 프로세서</b> 제어 펌웨어 전체 설명서.
 스테퍼 모터로 현상 탱크를 정/역 교반하고, 약품 온도를 측정하며, 웹 UI와 물리 디스플레이(TFT + 로터리 인코더)로
 레시피/수동 운전을 제어한다. 단일 <code>.ino</code> 모놀리식에서 <b>PlatformIO 기반 C++ OOP</b>로 이관(v4.0)된 구조 기준.
 v4.4~v4.8.1에서 안정성 전수 개선(PCNT 패닉 근본 수정·노이즈 가드·운전 중 플래시 차단), 웹 OTA, 멀티 보드 제어,
-보드별 핀 배치(칩 MAC 자동 선택), 무디스플레이·N8R2 지원, WiFi 검색, 온도 보정이 추가되었다.
+보드별 핀 배치(칩 MAC 자동 선택), 무디스플레이·N8R2 지원, WiFi 검색, 온도 보정이 추가되었고,
+v4.9~v4.9.3에서 정전·리셋 복구, 하드웨어 감시(DIAG/VM), 기존 제어 화면 통합 동시 제어(자동 탐색), AP 이름 = <code>이름.local</code> 접속이 추가되었다.
 현존 이슈·실측 기록은 <code>ISSUES.md</code>.</p>
 
 <!-- ───────────────────────────── -->
@@ -258,6 +259,7 @@ TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활�
 Config.h              물리 상수 (Cfg::, constexpr) · FW_VERSION · 노이즈/온도 임계값
 PinMap.*              보드별 핀 배치 + hasDisplay + rtdWires (칩 MAC 자동 선택, static_assert 검증)
 NoiseGuard.*          입력 노이즈 버스트 → 모터 정지 이벤트, 연속 비정상 리셋 → 모터 잠금 (RTC_NOINIT)
+HwSafety.*            TMC2209 DIAG / 모터 전원 VM 감시 → 즉시 차단·잠금 (PinMap 배선 보드만)
 Types.h               공유 도메인 타입 (MotorState, StepInfo, CmdType, Cmd)
 CommandQueue.h        크로스코어 명령 큐 + 비상정지 플래그
 RecipeStage.h         크로스코어 레시피 스테이징 버퍼 (뮤텍스)
@@ -265,7 +267,7 @@ ISaver.h              화면보호기 설정 인터페이스 (+ 무디스플레�
 MotionController.*     TMC2209 스테퍼 상태머신 (레시피 무관)
 RecipeRunner.*         레시피 단계 시퀀서 (steps + 뮤텍스 소유)
 TemperatureSensor.*    MAX31865 — Core 0 태스크, 뮤텍스 보호
-WifiManager.*          AP+STA 동시 모드, DNS/mDNS, Preferences
+WifiManager.*          AP(+STA, 항상 DHCP), AP 이름=mDNS 이름, 자체 DNS 태스크, Preferences
 WebServer.*            ESPAsyncWebServer 라우트 + 상태 JSON + 스테이징
 web_assets.h          웹 UI HTML/CSS/JS (PROGMEM 임베드)
 web_multi.h           멀티 보드 제어 페이지 /multi (브라우저가 각 보드 API 직접 호출)
@@ -286,6 +288,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <tr><td><code>manualStart(rpm,fwd,cycle,rotSec)</code></td><td>수동 운전 시작</td></tr>
 <tr><td><code>noiseStop()</code></td><td>노이즈 가드 트립 — 레시피 진행 중이면 일시정지(재개 가능), 아니면 감속 정지</td></tr>
 <tr><td><code>dispatch(Cmd)</code></td><td>큐에서 꺼낸 명령을 위 함수로 분기 (STOP/PAUSE/CONFIRM/MANUAL/SAFE_STOP/SKIP/GOTO)</td></tr>
+<tr><td><code>hwFaultStop()</code> / <code>applyLock()</code></td><td>하드웨어 고장 — 레시피 <code>forcePause()</code> + 코일 즉시 차단 + 잠금(가드 잠금 ∨ 고장 래치)</td></tr>
 <tr><td><code>otaRollbackIfCrashLoop()</code></td><td>OTA 직후 크래시 루프(가드 잠금)면 이전 파티션으로 롤백 + 리셋 카운터 초기화</td></tr>
 <tr><td><code>safePinInit()</code></td><td><b>setup 최우선</b> — 레벨 먼저·방향 나중으로 EN=HIGH(글리치 없음), 디스플레이 보드만 패널 핀 idle 고정·입력 풀업</td></tr>
 <tr><td><code>mountFs()</code></td><td>LittleFS 마운트. 1차 실패 시 즉시 포맷하지 않고 1회 재시도(부팅 전원 불안정으로 레시피 소실 방지)</td></tr>
@@ -312,6 +315,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 <pre><code>load() <span class="a">→</span> startStep(0) <span class="a">→</span> 단계 지속시간 경과 시 requestStepStop()
        <span class="a">→</span> 감속 완료(takeStepStopped) <span class="a">→</span> waitConfirm(약품 교체 대기)
        <span class="a">→</span> confirm() <span class="a">→</span> 다음 단계 …</code></pre>
+<p><b>정전·리셋 복구.</b> 진행 상태(단계 목록·현재 단계·경과·상태)를 NVS <code>rec</code>에 저장한다 — <b>모터가 멈춘 순간에만</b>(단계 시작 직전, 확인대기, 일시정지 완료, REST 중 10초마다). <code>begin()</code>이 미완료 기록을 읽어 복구 대기(<code>recoveryPending()</code>)로 두고, <code>applyRecovery(RESUME|RESTART_STEP|NEXT_STEP|DISCARD)</code>는 사용자가 고를 때만 실행(모터 IDLE 필수). 진행 중이었으면 남은 시간부터, 일시정지·확인대기였으면 그 상태로 복원. <code>clear()</code>는 이번 부팅에 쓴 기록만 지운다(수동 운전 시작이 이전 복구 기록을 지우지 않게). <code>forcePause()</code>는 하드웨어 고장 시 모터 동작 없이 일시정지로 보존.</p>
 <p>그 외: <code>pauseToggle()</code>(감속 정지) · <code>skipStep()</code> / <code>gotoStep(idx)</code>(공통 <code>switchTo()</code> — 감속 정지 완료 후 목표 단계 시작) · <code>snapshot()</code>(표시용 상태 스냅샷) · <code>copySteps()</code>(웹 <code>/api/recipe</code>용 단계 목록).</p>
 
 <h3><code>TemperatureSensor</code> — 온도 측정</h3>
@@ -325,7 +329,7 @@ nyan_frames.h          임베드 Nyan 화면보호기 프레임 (생성물, flas
 </ul>
 
 <h3><code>WifiManager</code> — 네트워크</h3>
-<p>홈 WiFi(STA) 미설정이면 AP 단독, 설정 시 AP+STA. 보드 번호에 따라 이름·AP 대역이 정해진다(14장). STA 재연결은 30초→최대 5분 백오프(코어 자동재연결 OFF — 즉시 재시도는 채널 스캔으로 AP 통신을 끊음). WiFi 절전 OFF. 설정은 Preferences <code>wifi</code>에 영구 저장.</p>
+<p>홈 WiFi(STA) 미설정이면 AP 단독, 설정 시 AP+STA(<b>항상 DHCP</b>, 고정 IP 옵션 제거). AP SSID가 곧 접속 이름(<code>이름.local</code>), 보드 번호는 AP 대역을 정한다(14장). Core 0 DNS 태스크가 자기·연결된 보드 이름을 응답한다. STA 재연결은 30초→최대 5분 백오프(코어 자동재연결 OFF — 즉시 재시도는 채널 스캔으로 AP 통신을 끊음). WiFi 절전 OFF. 설정은 Preferences <code>wifi</code>에 영구 저장.</p>
 
 <h3><code>WebServer</code> — HTTP</h3>
 <p>ESPAsyncWebServer 기반. HTML은 <code>web_assets.h</code>에 PROGMEM 임베드. 의존성(motion/recipe/temp/cmd/wifi/saver)을 <code>begin()</code>에서 주입받아 소유하지 않는다. <code>/api/start</code>는 요청별 버퍼(<code>_tempObject</code>)로 여러 기기가 동시에 보내도 본문이 섞이지 않는다. 레시피 저장은 동시 저장 차단·64KB 상한·쓰기 실패 감지·<b>커밋 전 JSON 검증</b>. 화면보호기 업로드는 파일핸들(<code>_upFile</code>)을 한 번 열고 청크마다 write만 한다.</p>
@@ -470,6 +474,9 @@ spi_flash_op_block_func → shared_intr_isr → <span class="k">pcnt_intr_servic
 <tr><td><span class="pill m-post">POST</span></td><td><code>/api/ota</code></td><td>펌웨어 업로드(<code>X-OTA</code> 헤더 필수). 사양 불일치·운전 중·동시 업로드 거부 (15장)</td></tr>
 <tr><td><span class="pill m-get">GET</span></td><td><code>/api/wifi/scan</code></td><td>주변 WiFi 비동기 검색. 진행 중이면 <code>{"scanning":true}</code>, 15초 캐시(<code>?refresh=1</code> 강제), 같은 SSID 병합·신호순</td></tr>
 <tr><td><span class="pill m-post">POST</span></td><td><code>/api/temp/cal</code></td><td>온도 보정 <code>{"gain","offset"}</code> 또는 <code>{"reset":true}</code> (16장)</td></tr>
+<tr><td><span class="pill m-get">GET</span></td><td><code>/api/peers</code></td><td>이 보드 AP 접속 기기 IP <code>{"ap":[…],"noIp":n}</code> — 동시 제어 자동 탐색 (14장)</td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/recovery</code></td><td>정전 복구 선택 <code>{"action":"resume|restart|next|discard"}</code></td></tr>
+<tr><td><span class="pill m-post">POST</span></td><td><code>/api/hwfault/clear</code></td><td>하드웨어 고장 해제 (원인 해소 시에만)</td></tr>
 <tr><td><span class="pill m-post">POST</span> <span class="pill m-del">DELETE</span></td><td><code>/api/saver/image</code></td><td>화면보호기 업로드(매직바이트로 JPEG/GIF/<code>ANM1</code> 판정 → <code>/saver.{jpg,gif,anim}</code>)/삭제. <b>모터 운전 중 차단</b>(업로드 거부·진행 중 중단, 삭제 409 — 플래시op 크래시 회피)</td></tr>
 </table>
 <h3><code>/api/status</code> 주요 키</h3>
@@ -477,7 +484,8 @@ spi_flash_op_block_func → shared_intr_isr → <span class="k">pcnt_intr_servic
 <tr><th>분류</th><th>키</th></tr>
 <tr><td>모터·레시피</td><td><code>motorRpm motorDir manualMode recipeRun recipePause waitConfirm recipeName stepIdx totalSteps stepName stepNext stepDurSec stepRemSec</code></td></tr>
 <tr><td>보드</td><td><code>fw variant name boardId mac pinProfile upSec</code></td></tr>
-<tr><td>진단</td><td><code>heapFree heapMin heapMax guard resetReason rssi apClients staConn staIP</code></td></tr>
+<tr><td>진단</td><td><code>heapFree heapMin heapMax guard resetReason rssi apClients staConn staIP hwFault vm</code></td></tr>
+<tr><td>복구</td><td><code>recovery{name step total stepName stepDurSec elapsedSec state}</code> (대기 시에만)</td></tr>
 <tr><td>온도</td><td><code>temperature tempFault tempFaultCode rtdWires rtdOhm calGain calOffset</code></td></tr>
 </table>
 <div class="note"><b>폴링 규칙(웹).</b> 상태 요청은 동시 1건·응답 후 500ms 뒤 다음 요청·2초 타임아웃·백그라운드 탭 중지(요청 적체로 명령이 밀리던 문제 해결). 정지류 명령은 1.5초 타임아웃 × 최대 5회 재시도, 끝내 실패하면 경고창. 외부 페이지의 CSRF는 OTA만 커스텀 헤더로 차단 — 웹 인증은 없다.</div>
@@ -549,6 +557,8 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
   <li><b>탈조·충격 방지</b> — 모든 시작/정지/방향전환과 <b>일시정지·단계 이동·건너뛰기</b>는 S-커브 감속 경유. 비상정지(<code>stopImmediate</code>)만 즉시 정지. 비상정지 시 큐·대기 레시피를 폐기해 정지 직후 재기동 방지.</li>
   <li><b>노이즈 가드</b> — 인코더/버튼 노이즈 버스트 → 패널 입력 3초 차단, 60초 내 3회 → 모터 정지(레시피는 일시정지). 연속 비정상 리셋(브라운아웃·패닉·WDT) 3회 → 모터 잠금(전원 재투입 해제), 웹·TFT에 <code>LOCKED</code>.</li>
   <li><b>운전 중 플래시 쓰기·재부팅 금지</b> — 9장·10장.</li>
+  <li><b>정전·리셋 복구</b> — 재부팅 후 모터 자동 구동 없음. 웹 배너/TFT <code>RESUME?</code>에서 이어서·단계 처음부터·다음 단계·취소. 정전 시 경과는 마지막 REST 기준 근사.</li>
+  <li><b>하드웨어 감시</b> (<code>HwSafety</code>, 배선 시) — DIAG HIGH 60ms → 코일 즉시 차단, 구동 중 VM&lt;10.5V 0.5초 → 정지, VM&gt;28V → 즉시 차단. 레시피 일시정지 보존 + 모터 잠금, 원인 해소 후 웹에서 해제. 배선: DIAG→GPIO + 10kΩ 풀다운, VM—100kΩ—ADC1(1~10)—10kΩ—GND + 100nF, <code>PinMap.h</code>에 <code>diagPin/vmPin/vmRatio</code>.</li>
   <li><b>냉각</b> — 75RPM 연속 2h+ 시 모터·전자부 ≈50°C(실측). 발열은 I²R 지배 → VREF 최소 유지 정책.</li>
   <li><b>전원</b> — 소비는 1A 미만(추정)이라 20V 1.5A 이상이면 충분. 20V 라인에 퓨즈(1.5~2A), 드라이버 VM 근처 100~470µF, 5V 레귤레이터 출력에 쇼트키 다이오드(USB 5V가 레귤레이터를 거쳐 20V 라인으로 역류하는 것 방지) 권장. <b>USB만 꽂은 채 모터를 돌리지 말 것</b>, 전원 켠 채 모터 커넥터 탈착 금지.</li>
 </ul>
@@ -557,23 +567,28 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
 <!-- ───────────────────────────── -->
 <section id="multi">
 <h2><span class="n">14</span>멀티 보드 &amp; 네트워크</h2>
-<h3>보드 번호 (웹 설정, 1~9)</h3>
+<h3>접속 이름 = AP SSID</h3>
+<p>AP SSID를 mDNS 이름으로 쓴다 → <code>http://이름.local</code>. 새 SSID는 규칙(영문 소문자·숫자·<code>-</code>, 1~32자, 하이픈 시작·끝 금지)을 웹이 입력 중 변환하고 서버가 검증(위반 400). 기존 규칙 밖 SSID는 유지하고 이름만 변환한다(바꾸면 슬레이브·폰의 저장된 연결이 끊기므로).</p>
 <table>
-<tr><th>보드 번호</th><th>이름 (mDNS)</th><th>AP 주소</th></tr>
-<tr><td>1</td><td><code>europrocessor.local</code></td><td><code>192.168.4.1</code> (기존 호환)</td></tr>
-<tr><td>2</td><td><code>europrocessor2.local</code></td><td><code>192.168.5.1</code></td></tr>
-<tr><td>N</td><td><code>europrocessorN.local</code></td><td><code>192.168.(3+N).1</code></td></tr>
+<tr><th>보드</th><th>AP SSID</th><th>접속 주소</th></tr>
+<tr><td>바디2 (마스터)</td><td><code>FilmProcessor</code></td><td><code>filmprocessor.local</code> · 192.168.5.1</td></tr>
+<tr><td>바디1</td><td><code>europrocessor_2</code></td><td><code>europrocessor-2.local</code> · DHCP</td></tr>
 </table>
+<p>마스터의 <b>자체 DNS</b>(Core 0 태스크)가 자기 이름은 AP IP로, 연결된 다른 보드 이름은 mDNS로 찾아 대리 응답(60초 캐시)한다 — <code>.local</code>을 못 푸는 안드로이드도 이름으로 연다. 그 외 도메인은 NXDOMAIN. 윈도우는 mDNS를 먼저 시도해 첫 접속이 3~4초 걸릴 수 있다.</p>
+<h3>보드 번호 (웹 설정, 1~9)</h3>
+<p>AP 대역 <code>192.168.(3+N).1</code>을 정한다(1번=4.1, 2번=5.1).</p>
 <p>AP 대역을 나눈 이유: 다른 보드의 AP에 STA로 붙을 때 자기 AP와 같은 대역이면 라우팅이 깨진다. AP 최대 동시 접속은 10(폰 여러 대 + 다른 보드가 함께 사용).</p>
-<h3>집 WiFi 없이 여러 대 운용</h3>
-<pre><code>폰 ──WiFi──► 바디2 AP (192.168.5.1)  ◄──STA── 바디1 (고정 IP 192.168.5.11)
-             └ http://192.168.5.1/multi  →  두 보드 API를 브라우저가 직접 호출</code></pre>
+<h3>여러 대 동시 제어 (기존 제어 화면)</h3>
+<pre><code>폰 ──WiFi──► 마스터(바디2) AP  ◄──STA(DHCP)── 슬레이브(바디1 …)
+             └ 마스터 웹 → 상태 탭 "🔗 동시 제어" ON
+                → /api/peers (AP 접속 기기 IP) → 각 IP /api/status로 보드만 골라 자동 발견</code></pre>
 <ol class="body">
-  <li>각 보드에 서로 다른 보드 번호 지정.</li>
-  <li>나머지 보드의 설정 → 집 WiFi에 기준 보드 AP 이름·비밀번호 입력(검색 버튼으로 선택 가능), 고정 IP(예: .11, .12)와 게이트웨이(기준 보드 AP 주소).</li>
-  <li>폰은 기준 보드 AP에만 접속 → <code>/multi</code> → 보드 IP 추가(폰 브라우저에 저장).</li>
+  <li>보드마다 서로 다른 보드 번호·AP 이름.</li>
+  <li>슬레이브: 설정 → 홈 WiFi <b>[검색]</b> → 마스터 AP 선택 → 비밀번호 → 저장. <b>고정 IP 불필요</b>(옵션 자체 제거).</li>
+  <li>폰은 마스터 AP에만 접속 → 상태 탭 <b>🔗 동시 제어</b> 켜기 → 보드 자동 발견(MAC으로 기억, IP가 바뀌어도 유지). 체크 해제로 제외.</li>
+  <li>이 화면의 시작·정지(재시도)·안전정지·일시정지·다음 단계·건너뛰기·진행도 바 단계 이동·수동 운전이 선택된 보드 전체에 전달된다. 일시정지는 보드별 상태에 맞춰(멈출 보드만 / 재개할 보드만), 다음 단계는 확인대기 보드에만, 단계 이동은 그 단계가 있는 보드에만 → 상태 엇갈림 방지. 실패 보드는 알림.</li>
 </ol>
-<p><code>/multi</code>: 보드별 상태(이름·번호·IP·펌웨어·RSSI·RPM·방향·모드·레시피 진행)·정지·일시정지/재개·다음 단계·열기, 상단 <b>전체 정지</b>, 레시피 선택 후 체크한 보드에서 동시 시작. 보드 간 통신은 없어서 한 대가 꺼져도 나머지는 계속 동작한다. 레시피 타이밍은 각 보드가 자체로 재므로 시작 시각 차이(수십 ms)는 결과에 영향 없다.</p>
+<p>보드 간 통신은 없어서 한 대가 꺼져도 나머지는 계속 동작한다. 레시피 타이밍은 각 보드가 자체로 재므로 시작 시각 차이(수십 ms)는 결과에 영향 없다. 실측: 바디1 자동 발견, 정지 전달 14ms. 모든 보드가 집 공유기에 함께 붙은 구성은 자동 탐색 대상이 아니므로 <code>/multi</code>(IP 수동 입력)를 쓴다.</p>
 <h3>WiFi 검색 / 진단</h3>
 <ul>
   <li>설정 → 집 WiFi 이름 옆 <b>검색</b>: 2~4초 비동기 검색, 신호 막대·dBm·채널·개방망 표시, 고르면 이름 칸 자동 입력. 검색 중 AP 클라이언트 통신이 잠깐 느려질 수 있다.</li>
@@ -633,6 +648,11 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
 <tr><td>OTA/설정/레시피 저장 409</td><td>모터·레시피 동작 중. 정지 후 재시도 — 레시피 편집은 자동 저장 대기.</td></tr>
 <tr><td>패널 입력이 가끔 안 먹고 화면에 <code>NOISE</code></td><td>입력 노이즈 가드 차단(3초). 정상 조작에서도 뜨면 <code>[Noise] peak</code> 로그로 <code>Config.h</code> 임계값 조정, 인코더 선 꼬임·10nF.</td></tr>
 <tr><td>모터가 안 돌고 <code>LOCKED</code></td><td>연속 비정상 리셋 3회 → 모터 잠금. 전원부 점검 후 전원 재투입.</td></tr>
+<tr><td>모터가 안 돌고 <code>FAULT</code> / 웹 빨간 배너</td><td>하드웨어 감시(DIAG·VM) 고장 래치. 드라이버 과열·단락·전원 점검 후 [점검 후 해제] — 원인이 남아 있으면 해제 거부.</td></tr>
+<tr><td>재부팅 후 <code>RESUME?</code> / 미완료 레시피 배너</td><td>정전·리셋 복구 대기. 이어서·단계 처음부터·다음 단계·취소 중 선택(모터 자동 구동 없음).</td></tr>
+<tr><td>동시 제어에서 보드가 안 보임</td><td>그 보드가 마스터 AP에 연결됐는지 확인 후 [보드 찾기]. "IP 미확인 기기"는 접속 직후일 수 있음 — 잠시 후 다시.</td></tr>
+<tr><td><code>이름.local</code>이 안 열림</td><td>마스터 AP에 연결된 상태인지 확인. 이름은 AP SSID를 규칙대로 변환한 값(설정 화면 아래 "접속 주소"). 윈도우는 첫 접속 3~4초 대기.</td></tr>
+<tr><td>SSID 저장 시 "invalid ssid"</td><td>새 AP 이름은 영문 소문자·숫자·하이픈, 1~32자, 하이픈 시작·끝 금지.</td></tr>
 <tr><td>인코더 한쪽 방향만 동작 / 모터도 이상</td><td>PCNT 인코더 시도의 잔재. 현재는 인터럽트 인코더 — 이 증상이면 PCNT 코드 혼입 의심.</td></tr>
 <tr><td>벅 컨버터 사망 (5V 없음)</td><td>과부하가 아닌 발열/개체 불량. 입력정격 여유 부품(36V급)으로 교체. 모터(20V 직결)는 영향 없음.</td></tr>
 <tr><td>출력 80RPM 초과 시 탈조</td><td>토크–속도 한계(back-EMF), 코드 결함 아님. 권장 75RPM.</td></tr>
@@ -642,7 +662,7 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
 </section>
 
 <hr>
-<p class="footer">europrocessor 펌웨어 설명서 v4.8.1 · 2026-10-04 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · <code>README.md</code> + 소스 + <code>ISSUES.md</code> 실측 기준</p>
+<p class="footer">europrocessor 펌웨어 설명서 v4.9.3 · 2026-10-04 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · <code>README.md</code> + 소스 + <code>ISSUES.md</code> 실측 기준</p>
 
 </main>
 </div>

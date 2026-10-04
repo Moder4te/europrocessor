@@ -156,6 +156,40 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
 
 <div id="page-status" class="page">
   <h2 data-i18n="pg_status"></h2>
+  <div class="card" id="hw-card" style="display:none;border:2px solid var(--danger,#d6336c);">
+    <div class="card-title" style="color:var(--danger,#d6336c);" data-i18n="hw_title"></div>
+    <div id="hw-msg" style="font-size:14px;margin:6px 0;"></div>
+    <button class="btn btn-outline btn-sm" onclick="hwClear()" data-i18n="hw_clear"></button>
+    <div id="hw-st" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+  </div>
+  <div class="card" id="rec-card" style="display:none;border:2px solid var(--accent,#d9730d);">
+    <div class="card-title" data-i18n="rec_title"></div>
+    <div id="rec-msg" style="font-size:14px;margin:6px 0;"></div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;">
+      <button class="btn btn-primary btn-sm" onclick="recAct('resume')" data-i18n="rec_resume"></button>
+      <button class="btn btn-outline btn-sm" onclick="recAct('restart')" data-i18n="rec_restart"></button>
+      <button class="btn btn-outline btn-sm" onclick="recAct('next')" data-i18n="rec_next"></button>
+      <button class="btn btn-outline btn-sm" onclick="recAct('discard')" data-i18n="rec_discard"></button>
+    </div>
+    <div id="rec-st" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+  </div>
+  <div class="card" id="sync-card">
+    <div class="toggle-row">
+      <span class="card-title" style="margin:0;" data-i18n="sync_title"></span>
+      <label class="toggle">
+        <input type="checkbox" id="sync-chk" onchange="syncToggle()">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+    <div id="sync-body" style="display:none;margin-top:8px;">
+      <div id="sync-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+      <div style="display:flex;gap:7px;margin-top:8px;align-items:center;">
+        <button class="btn btn-outline btn-sm" onclick="syncDiscover()" data-i18n="sync_find"></button>
+        <span id="sync-st" style="font-size:12px;color:var(--muted);"></span>
+      </div>
+    </div>
+    <div id="sync-hint" style="font-size:12px;color:var(--muted);margin-top:6px;" data-i18n="sync_hint"></div>
+  </div>
   <div class="card">
     <div class="card-title" data-i18n="motor_status"></div>
     <div class="motor-row">
@@ -260,7 +294,9 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <span class="sect-lbl" data-i18n="ap_section"></span>
     <div class="form-grp">
       <label class="form-lbl" data-i18n="wifi_ssid"></label>
-      <input class="form-in" id="set-ap-ssid" type="text" maxlength="32" autocomplete="off">
+      <input class="form-in" id="set-ap-ssid" type="text" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false"
+             pattern="[a-z0-9]([a-z0-9\-]{0,30}[a-z0-9])?" oninput="apNameInput(this)">
+      <div id="ap-name-st" style="font-size:12px;margin-top:4px;color:var(--muted);"></div>
     </div>
     <div class="form-grp">
       <label class="form-lbl" data-i18n="board_id"></label>
@@ -284,31 +320,6 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
     <div class="form-grp" style="margin-bottom:14px;">
       <label class="form-lbl" data-i18n="sta_pass"></label>
       <input class="form-in" id="set-sta-pass" type="password" maxlength="64" autocomplete="new-password">
-    </div>
-    <div class="form-grp" style="margin-bottom:14px;display:flex;align-items:center;gap:10px;">
-      <label style="margin:0;font-weight:600;" data-i18n="static_ip"></label>
-      <label style="position:relative;display:inline-block;width:42px;height:24px;margin:0;">
-        <input type="checkbox" id="set-sta-static" onchange="onStaticToggle()" style="opacity:0;width:0;height:0;">
-        <span onclick="document.getElementById('set-sta-static').click()" style="position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:24px;transition:.3s;"></span>
-      </label>
-    </div>
-    <div id="static-ip-fields" style="display:none;">
-      <div class="form-grp" style="margin-bottom:10px;">
-        <label class="form-lbl" data-i18n="lbl_ip"></label>
-        <input class="form-in" id="set-sta-ip" type="text" maxlength="15" placeholder="192.168.1.100">
-      </div>
-      <div class="form-grp" style="margin-bottom:10px;">
-        <label class="form-lbl" data-i18n="lbl_gw"></label>
-        <input class="form-in" id="set-sta-gw" type="text" maxlength="15" placeholder="192.168.1.1">
-      </div>
-      <div class="form-grp" style="margin-bottom:10px;">
-        <label class="form-lbl" data-i18n="lbl_sn"></label>
-        <input class="form-in" id="set-sta-sn" type="text" maxlength="15" placeholder="255.255.255.0">
-      </div>
-      <div class="form-grp" style="margin-bottom:14px;">
-        <label class="form-lbl" data-i18n="lbl_dns"></label>
-        <input class="form-in" id="set-sta-dns" type="text" maxlength="15" placeholder="8.8.8.8">
-      </div>
     </div>
     <button class="btn btn-primary" style="width:100%;" onclick="saveSettings()" data-i18n="save_restart"></button>
   </div>
@@ -454,7 +465,6 @@ const STR={
     dir_fwd_short:'순방향',dir_rev_short:'역방향',
     ap_section:'자체 AP 설정 (직접 접속)',wifi_ssid:'AP SSID',wifi_pass:'AP 비밀번호',
     sta_section:'홈 WiFi 연결 (같은 네트워크 접속)',sta_ssid:'홈 WiFi SSID',sta_pass:'홈 WiFi 비밀번호',
-    static_ip:'고정 IP 사용',lbl_ip:'IP 주소',lbl_gw:'게이트웨이',lbl_sn:'서브넷 마스크',lbl_dns:'DNS 서버',
     save_restart:'저장 및 재시작',
     net_status:'네트워크 상태',ap_ip:'AP IP (직접 접속)',
     home_wifi:'홈 WiFi',sta_conn:'연결됨 ✓',sta_disconn:'미연결',home_ip:'홈 WiFi IP',
@@ -476,6 +486,25 @@ const STR={
     save_wait:'⏸ 저장 대기 — 모터 정지 후 자동 저장',save_ing:'저장 중…',save_ok:'✓ 보드에 저장됨',
     save_retry:'연결 끊김 — 재시도 중',save_fail:'⚠ 저장 실패 — 페이지를 닫지 마세요',
     err_busy_save:'모터 동작/레시피 진행 중에는 설정을 저장할 수 없습니다. 정지 후 다시 시도하세요.',
+    ap_name_rule:'AP 이름은 영문 소문자·숫자·하이픈(-)만, 1~32자, 하이픈으로 시작·끝 불가 (접속 주소 이름.local로 쓰임)',
+    ap_name_addr:'접속 주소: http://{h}.local',
+    ap_name_legacy:'현재 이름은 규칙 밖 — 접속 주소는 http://{h}.local. 새 이름으로 바꾸길 권장',
+    ap_name_change:'AP 이름을 "{h}"(으)로 바꿉니다.\n이 보드 AP에 연결된 폰·다른 보드는 새 이름으로 다시 연결해야 합니다. 계속할까요?',
+    sync_title:'🔗 동시 제어',sync_find:'보드 찾기',sync_finding:'이 보드 AP에 연결된 보드 찾는 중…',
+    sync_found:'{n}대 발견',sync_none:'연결된 보드 없음 — 다른 보드를 이 보드 AP에 연결하세요',
+    sync_empty:'아직 연결된 보드가 없습니다',sync_noip:'IP 미확인 기기 {n}대 (접속 직후일 수 있음 — 잠시 후 다시 찾기)',sync_offline:'응답 없음',
+    sync_hint:'켜면 이 화면의 시작·정지·일시정지·다음 단계·수동 운전이 이 보드 AP에 연결된 다른 보드에도 같이 적용됩니다. 다른 보드 연결: 그 보드의 설정 → 홈 WiFi [검색] → 이 보드 AP 선택 → 비밀번호 → 저장 (고정 IP 불필요).',
+    sync_m_idle:'대기',sync_m_manual:'수동',sync_m_pause:'일시정지',sync_m_wait:'확인 대기',
+    sync_confirm_all:'동시 제어: 연결된 보드 {n}대에서도 함께 시작합니다 (진행 중인 작업은 중단).',
+    sync_fail:'⚠ 동시 제어 전달 실패: {b}',
+    rec_title:'⚡ 미완료 레시피 (정전·재부팅)',rec_resume:'이어서 진행',rec_restart:'이 단계 처음부터',rec_next:'다음 단계부터',rec_discard:'취소',
+    rec_st_run:'진행 중이었음',rec_st_pause:'일시정지였음',rec_st_wait:'단계 완료·확인 대기였음',rec_elapsed:'경과(근사)',
+    rec_confirm_resume:'남은 시간부터 이어서 진행할까요?\n(진행 중이었으면 모터가 바로 돕니다. 경과 시간은 근사값)',
+    rec_confirm_restart:'이 단계를 처음부터 다시 진행할까요? (모터가 바로 돕니다)',
+    rec_confirm_next:'다음 단계부터 진행할까요? (모터가 바로 돕니다)',
+    rec_confirm_discard:'미완료 레시피 기록을 삭제할까요?',rec_done:'✓ 적용됨',rec_fail:'실패',
+    hw_title:'⚠ 하드웨어 고장 — 모터 잠김',hw_clear:'점검 후 해제',hw_clear_sent:'해제 요청됨 — 원인이 남아 있으면 해제되지 않습니다',
+    hw_driver:'모터 드라이버 고장 신호(DIAG) — 과열·단락 점검',hw_vm_low:'모터 전원 전압 낮음 — 어댑터·배선 점검',hw_vm_high:'모터 전원 전압 과다 — 즉시 전원 점검',
     cal_title:'온도 보정 (PT100)',cal_now:'현재 측정',cal_cur:'적용 중인 보정',
     cal_hint:'센서와 기준 온도계를 같은 물에 넣고 1~2분 안정시킨 뒤, 기준 온도를 입력하고 [점 기록]. 2점(예: 0°C 얼음물 + 30~40°C)이면 오프셋·기울기 모두 보정.',
     cal_add:'점 기록',cal_undo:'마지막 점 삭제',cal_save:'보정 저장',cal_clear:'점 지우기',cal_reset:'보정 초기화',
@@ -513,7 +542,6 @@ const STR={
     dir_fwd_short:'Forward',dir_rev_short:'Reverse',
     ap_section:'AP Settings (Direct Connect)',wifi_ssid:'AP SSID',wifi_pass:'AP Password',
     sta_section:'Home WiFi (Same Network Access)',sta_ssid:'Home WiFi SSID',sta_pass:'Home WiFi Password',
-    static_ip:'Use Static IP',lbl_ip:'IP Address',lbl_gw:'Gateway',lbl_sn:'Subnet Mask',lbl_dns:'DNS Server',
     save_restart:'Save & Restart',
     net_status:'Network Status',ap_ip:'AP IP (Direct)',
     home_wifi:'Home WiFi',sta_conn:'Connected ✓',sta_disconn:'Not connected',home_ip:'Home WiFi IP',
@@ -535,6 +563,25 @@ const STR={
     save_wait:'⏸ Save pending — saves when the motor stops',save_ing:'Saving…',save_ok:'✓ Saved to device',
     save_retry:'Connection lost — retrying',save_fail:'⚠ Save failed — keep this page open',
     err_busy_save:'Cannot save settings while the motor or a recipe is running. Stop first.',
+    ap_name_rule:'AP name: lowercase letters, digits and hyphens only, 1–32 chars, no leading/trailing hyphen (used as name.local)',
+    ap_name_addr:'Address: http://{h}.local',
+    ap_name_legacy:'Current name breaks the rule — address is http://{h}.local. Renaming is recommended',
+    ap_name_change:'Rename the AP to "{h}"?\nPhones and boards connected to this AP must reconnect to the new name.',
+    sync_title:'🔗 Synchronized control',sync_find:'Find boards',sync_finding:'Searching boards connected to this AP…',
+    sync_found:'{n} found',sync_none:'No boards — connect other boards to this board\'s AP',
+    sync_empty:'No boards connected yet',sync_noip:'{n} device(s) without an IP yet — try again shortly',sync_offline:'offline',
+    sync_hint:'When on, start/stop/pause/next/manual on this screen also apply to boards connected to this board\'s AP. To connect a board: its Settings → Home WiFi [Scan] → pick this AP → password → Save (no static IP needed).',
+    sync_m_idle:'idle',sync_m_manual:'manual',sync_m_pause:'paused',sync_m_wait:'awaiting confirm',
+    sync_confirm_all:'Synchronized: also starts on {n} connected board(s) (current jobs are interrupted).',
+    sync_fail:'⚠ Sync command failed: {b}',
+    rec_title:'⚡ Unfinished recipe (power loss / reboot)',rec_resume:'Resume',rec_restart:'Restart this step',rec_next:'From next step',rec_discard:'Discard',
+    rec_st_run:'was running',rec_st_pause:'was paused',rec_st_wait:'step done, awaiting confirm',rec_elapsed:'elapsed (approx.)',
+    rec_confirm_resume:'Resume from the remaining time?\n(If it was running, the motor starts immediately. Elapsed time is approximate.)',
+    rec_confirm_restart:'Restart this step from the beginning? (motor starts immediately)',
+    rec_confirm_next:'Continue from the next step? (motor starts immediately)',
+    rec_confirm_discard:'Delete the unfinished recipe record?',rec_done:'✓ Applied',rec_fail:'Failed',
+    hw_title:'⚠ Hardware fault — motor locked',hw_clear:'Clear after checking',hw_clear_sent:'Clear requested — stays locked while the cause persists',
+    hw_driver:'Motor driver fault (DIAG) — check overheating/short',hw_vm_low:'Motor supply voltage low — check adapter/wiring',hw_vm_high:'Motor supply voltage too high — check power now',
     cal_title:'Temperature Calibration (PT100)',cal_now:'Current reading',cal_cur:'Active calibration',
     cal_hint:'Put the sensor and a reference thermometer in the same water, wait 1–2 min, enter the reference temperature and tap [Add point]. Two points (e.g. 0°C ice water + 30–40°C) correct offset and slope.',
     cal_add:'Add point',cal_undo:'Undo point',cal_save:'Save',cal_clear:'Clear points',cal_reset:'Reset',
@@ -644,16 +691,79 @@ function rmS(i){recipes[activeCat][selIdx].steps.splice(i,1);saveR(recipes);rend
 function mvS(i,d){const ss=recipes[activeCat][selIdx].steps,j=i+d;if(j<0||j>=ss.length)return;[ss[i],ss[j]]=[ss[j],ss[i]];saveR(recipes);renderStepEditor();}
 function updS(i,k,v){recipes[activeCat][selIdx].steps[i][k]=v;saveR(recipes);}
 
+// ── 동시 제어 (이 보드 = 마스터, AP에 붙은 다른 보드 = 피어) ──
+//   켜면 이 화면의 모든 제어 명령이 선택된 피어에도 전달됨. 피어는 MAC으로 기억(IP 바뀌어도 유지).
+//   토글형 명령(일시정지)은 피어별 상태를 보고 보낼지 결정 → 보드 간 상태 엇갈림 방지.
+const SYNC_LS='sync_cfg_'+location.host;
+let syncCfg={on:false,macs:{}};try{syncCfg=Object.assign(syncCfg,JSON.parse(localStorage.getItem(SYNC_LS))||{});}catch(e){}
+let peers={};          // ip → {d:status, ok:bool, busy:bool}
+function syncSave(){try{localStorage.setItem(SYNC_LS,JSON.stringify(syncCfg));}catch(e){}}
+async function pFetch(ip,path,opt={},ms=1500){const ac=new AbortController(),to=setTimeout(()=>ac.abort(),ms);try{return await fetch('http://'+ip+path,{...opt,signal:ac.signal});}finally{clearTimeout(to);}}
+function syncTargets(filter){return Object.entries(peers).filter(([ip,p])=>p.ok&&p.d&&syncCfg.macs[p.d.mac]!==false&&(!filter||filter(p.d))).map(([ip])=>ip);}
+async function syncDiscover(){
+  const st=document.getElementById('sync-st');st.textContent=t('sync_finding');
+  let ips=[],noIp=0;try{const j=await (await fetch('/api/peers')).json();ips=j.ap||[];noIp=j.noIp|0;}catch(e){}
+  await Promise.all(ips.map(async ip=>{
+    try{const d=await (await pFetch(ip,'/api/status')).json();if(d&&d.fw){peers[ip]=peers[ip]||{};peers[ip].d=d;peers[ip].ok=true;}}catch(e){}
+  }));
+  const n=Object.keys(peers).length;st.textContent=(n?t('sync_found').replace('{n}',n):t('sync_none'))+(noIp?' · '+t('sync_noip').replace('{n}',noIp):'');
+  syncRender();
+}
+function syncPoll(ip){
+  const p=peers[ip];if(!p||!syncCfg.on)return;
+  if(p.busy||document.hidden){setTimeout(()=>syncPoll(ip),1000);return;}
+  p.busy=true;
+  pFetch(ip,'/api/status').then(r=>r.json()).then(d=>{p.d=d;p.ok=true;}).catch(()=>{p.ok=false;})
+    .finally(()=>{p.busy=false;syncRender();setTimeout(()=>syncPoll(ip),1000);});
+}
+function syncToggle(){
+  syncCfg.on=document.getElementById('sync-chk').checked;syncSave();
+  document.getElementById('sync-body').style.display=syncCfg.on?'':'none';
+  if(syncCfg.on){syncDiscover().then(()=>Object.keys(peers).forEach(syncPoll));}
+}
+function syncPick(mac,on){syncCfg.macs[mac]=on;syncSave();syncRender();}
+function syncRender(){
+  const box=document.getElementById('sync-list');if(!box)return;
+  box.innerHTML=Object.entries(peers).map(([ip,p])=>{
+    const d=p.d||{},on=syncCfg.macs[d.mac]!==false;
+    const mode=d.waitConfirm?t('sync_m_wait'):d.recipePause?t('sync_m_pause'):d.recipeRun?(d.stepIdx+1)+'/'+d.totalSteps+' '+escH(d.stepName||'')+' · '+mmssJ(d.stepRemSec):d.manualMode?t('sync_m_manual'):t('sync_m_idle');
+    const warn=d.hwFault?' ⚠'+d.hwFault:d.guard&&d.guard!=='ok'?' ⚠'+d.guard:'';
+    return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;opacity:${p.ok?1:.45}">
+      <input type="checkbox" ${on?'checked':''} onchange="syncPick('${escH(d.mac||ip)}',this.checked)">
+      <b>${escH(d.name||ip)}</b><span style="color:var(--muted)">${escH(ip)}${p.ok?'':' · '+t('sync_offline')}</span>
+      <span style="margin-left:auto">${d.motorRpm|0} RPM · ${mode}${warn}</span></label>`;
+  }).join('')||`<div style="font-size:12px;color:var(--muted)">${t('sync_empty')}</div>`;
+  document.getElementById('sync-hint').style.display=syncCfg.on?'none':'';
+}
+// 피어로 명령 전송 — 실패한 보드 이름을 모아 한 번에 알림
+async function syncSend(path,body,filter,retry){
+  if(!syncCfg.on)return;
+  const ips=syncTargets(filter);if(!ips.length)return;
+  const opt=body===undefined?{method:'POST'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+  const res=await Promise.all(ips.map(async ip=>{
+    for(let i=0;i<(retry||1);i++){try{const r=await pFetch(ip,path,opt,2500);if(r.ok)return true;}catch(e){}}
+    return false;
+  }));
+  const bad=ips.filter((ip,i)=>!res[i]).map(ip=>(peers[ip].d&&peers[ip].d.name)||ip);
+  if(bad.length)alert(t('sync_fail').replace('{b}',bad.join(', ')));
+}
+function syncInit(){
+  document.getElementById('sync-chk').checked=!!syncCfg.on;
+  if(syncCfg.on)syncToggle();else syncRender();
+}
+
 async function runSelectedRecipe(){
   if(selIdx<0){alert(t('warn_no_sel'));return;}
   const rec=recipes[activeCat][selIdx];
   if(!rec.steps.length){alert(t('warn_no_steps'));return;}
-  if(!confirm(t('confirm_run')))return;
+  const nPeers=syncCfg.on?syncTargets().length:0;
+  if(!confirm(t('confirm_run')+(nPeers?'\n'+t('sync_confirm_all').replace('{n}',nPeers):'')))return;
   lastRun={recipeName:rec.name,steps:rec.steps.map(s=>({name:s.name,speedRpm:clamp(s.speedRpm||50,1,80),durationSec:Math.max(1,s.durSec),rotIntSec:Math.max(5,s.rotIntSec)}))};
   await postJ('/api/start',lastRun);
+  await syncSend('/api/start',lastRun);
   switchTab('status',document.querySelectorAll('.bnav-btn')[1]);
 }
-async function startLastRecipe(){if(!lastRun){alert(t('warn_no_last'));return;}await postJ('/api/start',lastRun);}
+async function startLastRecipe(){if(!lastRun){alert(t('warn_no_last'));return;}await postJ('/api/start',lastRun);await syncSend('/api/start',lastRun);}
 
 let sd={motorRpm:0,motorDir:'IDLE',recipeRun:false,recipePause:false,waitConfirm:false,recipeName:'',stepName:'',stepNext:'',totalSteps:0,stepIdx:0,stepDurSec:0,stepRemSec:0,manualMode:false,staConn:false,staIP:'',temperature:-999,tempFault:false};
 // 폴링: 이전 응답 완료 후 500ms 뒤 다음 요청(적체 방지) + 2초 타임아웃 + 백그라운드 탭 중지.
@@ -662,7 +772,33 @@ let stBusy=false;
 async function fetchStatus(){if(stBusy)return;stBusy=true;const ac=new AbortController();const to=setTimeout(()=>ac.abort(),2000);try{const r=await fetch('/api/status',{signal:ac.signal});sd=await r.json();updateStatusUI();}catch(e){}finally{clearTimeout(to);stBusy=false;}}
 (function poll(){(document.hidden?Promise.resolve():fetchStatus()).finally(()=>setTimeout(poll,500));})();
 
+// ── 정전 복구 / 하드웨어 고장 배너 ──
+function mmssJ(s){s=Math.max(0,s|0);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function alertsUI(){
+  const hc=document.getElementById('hw-card');
+  if(sd.hwFault){hc.style.display='';document.getElementById('hw-msg').textContent=t('hw_'+sd.hwFault)+(sd.vm!==undefined?' (VM '+(+sd.vm).toFixed(1)+'V)':'');}
+  else hc.style.display='none';
+  const rc=document.getElementById('rec-card'),r=sd.recovery;
+  if(r){
+    rc.style.display='';
+    const st=[t('rec_st_run'),t('rec_st_pause'),t('rec_st_wait')][r.state|0]||'';
+    document.getElementById('rec-msg').textContent=`"${r.name}" — ${r.step+1}/${r.total} ${r.stepName} · ${st} · ${t('rec_elapsed')} ${mmssJ(r.elapsedSec)} / ${mmssJ(r.stepDurSec)}`;
+  } else rc.style.display='none';
+}
+async function recAct(a){
+  if(!confirm(t('rec_confirm_'+a)))return;
+  let r=null;try{r=await postJ('/api/recovery',{action:a});}catch(e){}
+  let j={};if(r&&!r.ok){try{j=await r.json();}catch(e){}}
+  document.getElementById('rec-st').textContent=r&&r.ok?t('rec_done'):t('rec_fail')+(j.error?' ('+j.error+')':'');
+  fetchStatus();
+}
+async function hwClear(){
+  let r=null;try{r=await fetch('/api/hwfault/clear',{method:'POST'});}catch(e){}
+  document.getElementById('hw-st').textContent=t('hw_clear_sent');
+  setTimeout(fetchStatus,800);
+}
 function updateStatusUI(){
+  alertsUI();
   document.getElementById('s-pct').innerHTML=sd.motorRpm+'<span>RPM</span>';
   document.getElementById('s-pwr').style.width=Math.min(100,sd.motorRpm*100/80)+'%';  // 최대 80RPM = 100%
   const dm={FWD:['b-fwd',t('dir_fwd')],REV:['b-rev',t('dir_rev')],REST:['b-rest',t('dir_rest')],IDLE:['b-idle',t('dir_idle')]};
@@ -746,23 +882,31 @@ async function gotoStepUI(i){
   const nm=curRec&&curRec.steps[i]?curRec.steps[i].name:String(i+1);
   if(!confirm(t('goto_confirm').replace('{n}',i+1).replace('{s}',nm)))return;
   try{const r=await postJ('/api/goto',{step:i});if(!r.ok)throw 0;}catch(e){alert(t('goto_fail'));}
+  await syncSend('/api/goto',{step:i},d=>d.recipeRun&&i<d.totalSteps);
   fetchStatus();
 }
 
-async function togglePause(){await fetch('/api/pause',{method:'POST'});fetchStatus();}
+async function togglePause(){
+  const pausing=!sd.recipePause;   // 마스터가 지금 멈추는 중인가
+  await fetch('/api/pause',{method:'POST'});
+  await syncSend('/api/pause',undefined,d=>d.recipeRun&&!d.waitConfirm&&(pausing?!d.recipePause:d.recipePause));
+  fetchStatus();
+}
 // 정지류는 반복 전송해도 결과 동일(idempotent) → 1.5초 타임아웃 × 최대 5회 재시도, 끝내 실패하면 경고.
 async function postStop(url){for(let i=0;i<5;i++){const ac=new AbortController();const to=setTimeout(()=>ac.abort(),1500);try{const r=await fetch(url,{method:'POST',signal:ac.signal});if(r.ok){fetchStatus();return;}}catch(e){}finally{clearTimeout(to);}await new Promise(res=>setTimeout(res,200));}alert(t('warn_stop_fail'));}
-async function doStop(){await postStop('/api/stop');}
-async function doSafeStop(){await postStop('/api/safestop');}
-async function doSkip(){await fetch('/api/skip',{method:'POST'});fetchStatus();}
-async function doConfirm(){await fetch('/api/confirm',{method:'POST'});fetchStatus();}
+async function doStop(){syncSend('/api/stop',undefined,null,5);await postStop('/api/stop');}
+async function doSafeStop(){syncSend('/api/safestop',undefined,null,5);await postStop('/api/safestop');}
+async function doSkip(){await fetch('/api/skip',{method:'POST'});await syncSend('/api/skip',undefined,d=>d.recipeRun);fetchStatus();}
+async function doConfirm(){await fetch('/api/confirm',{method:'POST'});await syncSend('/api/confirm',undefined,d=>d.waitConfirm);fetchStatus();}
 
 function onCycleToggle(){document.getElementById('m-rot-grp').style.display=document.getElementById('m-cycle-chk').checked?'':'none';}
 async function manualStart(fwd){
   const pct=+document.getElementById('m-slider').value;
   const cycle=document.getElementById('m-cycle-chk').checked;
   const rotSec=Math.max(5,+document.getElementById('m-rot-in').value||30);
-  await postJ('/api/manual',{speedRpm:pct,fwd:fwd,cycle:cycle,rotIntSec:rotSec});
+  const body={speedRpm:pct,fwd:fwd,cycle:cycle,rotIntSec:rotSec};
+  await postJ('/api/manual',body);
+  await syncSend('/api/manual',body);
   fetchStatus();
 }
 
@@ -774,28 +918,29 @@ function swToggle(){
 function swReset(){clearInterval(swTmr);swOn=false;swBase=0;document.getElementById('sw-start').textContent=t('sw_start');document.getElementById('sw-disp').textContent='00:00.0';}
 function swTick(){const ms=swBase+(swOn?Date.now()-swRef:0),s=Math.floor(ms/1000),ds=Math.floor((ms%1000)/100);document.getElementById('sw-disp').textContent=pad2(Math.floor(s/60))+':'+pad2(s%60)+'.'+ds;}
 
-function onStaticToggle(){
-  const on=document.getElementById('set-sta-static').checked;
-  document.getElementById('static-ip-fields').style.display=on?'block':'none';
-  // 토글 스위치 색상 업데이트
-  const span=document.querySelector('#set-sta-static+span');
-  if(span)span.style.background=on?'#4CAF50':'#ccc';
+// AP SSID = 접속 이름(이름.local) — mDNS 규칙(소문자·숫자·'-', 1~32자, '-'로 시작/끝 금지)으로 입력 중 변환
+let apNameOrig='';
+function toHostName(v){return v.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+/,'').slice(0,32);}
+function apNameValid(v){return /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(v);}
+function apNameInput(el){
+  const pos=el.selectionStart,before=el.value,v=toHostName(before);
+  if(v!==before){el.value=v;try{el.setSelectionRange(Math.min(pos,v.length),Math.min(pos,v.length));}catch(e){}}
+  apNameShow();
+}
+function apNameShow(){
+  const v=document.getElementById('set-ap-ssid').value,st=document.getElementById('ap-name-st');
+  if(v===apNameOrig&&!apNameValid(v)){st.style.color='var(--danger,#d6336c)';st.textContent=t('ap_name_legacy').replace('{h}',toHostName(v).replace(/-+$/,''));return;}
+  st.style.color=apNameValid(v)?'var(--muted)':'var(--danger,#d6336c)';
+  st.textContent=apNameValid(v)?t('ap_name_addr').replace('{h}',v):t('ap_name_rule');
 }
 async function loadSettings(){
   try{
     const r=await fetch('/api/settings');const d=await r.json();
-    document.getElementById('set-ap-ssid').value=d.apSSID||'';
+    document.getElementById('set-ap-ssid').value=d.apSSID||'';apNameOrig=d.apSSID||'';apNameShow();
     document.getElementById('set-sta-ssid').value=d.staSSID||'';
     document.getElementById('set-board-id').value=String(d.boardId||1);
     document.getElementById('ap-ip-val').textContent=d.apIP||'—';
     document.getElementById('host-val').textContent=(d.hostName||'europrocessor')+'.local';
-    const st=d.staStatic||false;
-    document.getElementById('set-sta-static').checked=st;
-    document.getElementById('set-sta-ip').value=d.staStaticIP||'192.168.1.100';
-    document.getElementById('set-sta-gw').value=d.staGW||'192.168.1.1';
-    document.getElementById('set-sta-sn').value=d.staSN||'255.255.255.0';
-    document.getElementById('set-sta-dns').value=d.staDNS||'8.8.8.8';
-    onStaticToggle();
   }catch(e){}
 }
 // ── 온도 보정 (1점/2점) ──
@@ -882,22 +1027,18 @@ function pickSsid(i){
 async function saveSettings(){
   const apSSID=document.getElementById('set-ap-ssid').value.trim();
   if(!apSSID){alert(t('err_ssid'));return;}
-  const staStatic=document.getElementById('set-sta-static').checked;
+  if(apSSID!==apNameOrig&&!apNameValid(apSSID)){alert(t('ap_name_rule'));return;}
+  if(apSSID!==apNameOrig&&!confirm(t('ap_name_change').replace('{h}',apSSID)))return;
   if(boardBusy()){alert(t('err_busy_save'));return;}
   let r=null;
   try{r=await postJ('/api/settings',{
     apSSID,apPass:document.getElementById('set-ap-pass').value,
     staSSID:document.getElementById('set-sta-ssid').value.trim(),
     boardId:parseInt(document.getElementById('set-board-id').value,10),
-    staPass:document.getElementById('set-sta-pass').value,
-    staStatic,
-    staStaticIP:document.getElementById('set-sta-ip').value.trim(),
-    staGW:document.getElementById('set-sta-gw').value.trim(),
-    staSN:document.getElementById('set-sta-sn').value.trim(),
-    staDNS:document.getElementById('set-sta-dns').value.trim()
+    staPass:document.getElementById('set-sta-pass').value
   });}catch(e){}
   if(r&&r.status===409){alert(t('err_busy_save'));return;}
-  if(!r||!r.ok){alert(t('save_fail'));return;}
+  if(!r||!r.ok){let j={};try{j=await r.json();}catch(e){}alert(j.error==='invalid ssid'?t('ap_name_rule'):t('save_fail'));return;}
   alert(t('saved_ok'));
 }
 
@@ -1276,7 +1417,7 @@ async function deleteSaverImage(){
 window.addEventListener('DOMContentLoaded',async ()=>{
   applyLang();
   recipes=await loadR();   // 보드 플래시에서 레시피 로드
-  renderCatTabs();renderRecipeList();loadSettings();loadSaver();fetchStatus();onCycleToggle();
+  renderCatTabs();renderRecipeList();loadSettings();loadSaver();fetchStatus();onCycleToggle();syncInit();
 });
 </script>
 </body>
