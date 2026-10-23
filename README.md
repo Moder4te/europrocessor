@@ -110,11 +110,14 @@ ESP32-S3로 만든 **필름 현상 탱크 회전 교반기**입니다. 폰 웹 �
 ### 전원 회로
 [![전원 회로도](docs/schematic_power.svg)](docs/schematic_power.svg)
 
+텍스트 요약 (`*` = 권장·선택 부품):
+
 ```
-USB-C PD 충전기 ─► CH224K(20V) ─► [F1 퓨즈*] ─┬─► [SW1*] ─► TMC2209 VM (+ C1 470µF)  → NEMA17
-                                              └─► 벅 20V→5V ─► [D1 SS34*] ─► ESP32-S3 5V ─► LDO 3V3
-                                                                         3V3 → TMC VIO · MAX31865 · TFT · 풀업
-(* = 권장·선택)
+USB-C PD ──> CH224K (20V) ──> [F1 fuse 1.5-2A*] ──┬──> [SW1*] ──> TMC2209 VM (+ C1 470uF) ──> NEMA17
+                                                  │
+                                                  └──> buck 20V->5V ──> [D1 SS34*] ──> ESP32-S3 5V
+                                                                                         │ onboard LDO
+                                                                                         └──> 3V3: TMC VIO, MAX31865, TFT, pull-ups
 ```
 
 ### 신호 회로 (바디1 기본 배치)
