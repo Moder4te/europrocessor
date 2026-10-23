@@ -195,6 +195,7 @@ s_h = f²·v_t·T / (1.5·(1+f)) ≈ 0.22·v_t  <span class="c">// 저크제한(
 <div class="note"><b>인러시/핫플러그.</b> PD가 5V→20V로 부드럽게 램프업 + 전류제한을 하므로 별도 NTC/소프트스타트/안티스파크는 <b>불필요</b>. 단, 살아있는 20V 레일에 커넥터 직삽은 지양.</div>
 <div class="warn"><b>비상정지(선택).</b> 물리 전원 스위치는 <b>모터 전원(20V→TMC) 차단용</b>으로 두는 게 안전 — 펌웨어 소프트 e-stop의 물리 백업. 꽂을 땐 ON 유지, 비상시에만 OFF.</div>
 <p>모터는 Core 1 + FastAccelStepper 하드웨어 ISR이라 디스플레이/웹 부하와 무관하게 타이밍을 보장한다. <b>벅이 죽어도 모터 전원(20V 직결)은 영향 없다.</b></p>
+<p><a href="schematic_power.svg"><img src="schematic_power.svg" alt="전원 회로도" style="max-width:100%;border:1px solid #d0d7de;border-radius:8px"></a><br><small>전원 회로도 — 실선 = 현재 장착, 주황 점선 = 권장·선택(ISSUES.md 2-A). 원본: <code>tools/gen_schematic.py</code></small></p>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -222,6 +223,7 @@ TMC2209   EN=40   DIR=41   STEP=42           <span class="c">(EN: LOW=코일활�
 </table>
 <div class="note"><b>빌드 타임 검증.</b> 금지 GPIO(strapping 0/3/45/46, USB 19/20, Flash·PSRAM 26~37, UART0 43/44, RGB LED 48, 존재하지 않는 ≥48)·<b>중복 핀</b>·<b>인코더 핀 ≥32</b>·잘못된 <code>rtdWires</code>는 <code>static_assert</code>로 컴파일 에러.</div>
 <div class="warn"><b>새 보드 등록.</b> 웹 설정 → 디바이스 정보의 MAC 확인 → <code>BOARDS[]</code>에 <code>{ "MAC", "이름", { 핀… }, hasDisplay, rtdWires }</code> 한 줄 추가 → 빌드·OTA. ESP 보드만 교체하면 MAC이 바뀌므로 표의 MAC도 갱신.</div>
+<p><a href="schematic_signal.svg"><img src="schematic_signal.svg" alt="신호 회로도" style="max-width:100%;border:1px solid #d0d7de;border-radius:8px"></a><br><small>신호 회로도 (바디1 기본 배치 + 바디2 핀 차이). 핀을 바꾸면 <code>PinMap.h</code>와 함께 <code>tools/gen_schematic.py</code>의 값도 고치고 다시 생성.</small></p>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -516,7 +518,8 @@ spi_flash_op_block_func → shared_intr_isr → <span class="k">pcnt_intr_servic
 <tr><td><code>Cfg::NOISE_ESCALATE_BURSTS</code> / <code>_WIN_MS</code></td><td>3 / 60000</td><td>창 안에 버스트 N회 → 모터 정지</td></tr>
 <tr><td><code>Cfg::GUARD_BAD_RESETS</code> / <code>GUARD_STABLE_MS</code></td><td>3 / 60000</td><td>연속 비정상 리셋 N회 → 모터 잠금 / 정상 가동 시 카운터 리셋</td></tr>
 <tr><td><code>Cfg::MAX_JSON_BODY</code> / <code>MAX_RECIPES_BODY</code></td><td>16KB / 64KB</td><td>웹 본문 상한 (힙 보호)</td></tr>
-<tr><td><code>Cfg::FW_VERSION</code></td><td>"v4.8.1"</td><td>펌웨어 버전 (웹·TFT·로그)</td></tr>
+<tr><td><code>Cfg::DIAG_DEBOUNCE</code> / <code>VM_MIN_V</code> / <code>VM_MAX_V</code> / <code>VM_LOW_GRACE_MS</code></td><td>3 / 10.5V / 28V / 500</td><td>하드웨어 감시 — DIAG HIGH 연속 N회(20ms 간격) / 구동 중 저전압 / 과전압 즉시 차단 / 저전압 지속 시간</td></tr>
+<tr><td><code>Cfg::FW_VERSION</code></td><td>"v4.9.3"</td><td>펌웨어 버전 (웹·TFT·로그)</td></tr>
 </table>
 <p>핀·<code>hasDisplay</code>·<code>rtdWires</code>는 <code>PinMap.h</code>(3장), 칩 사양 태그 <code>FW_VARIANT</code>는 <code>platformio.ini</code>(15장).</p>
 </section>
@@ -545,6 +548,7 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
 <div class="note"><b>버전 고정.</b> <code>platform espressif32 @ 7.0.1</code> + <code>lib_deps</code> 전부 버전 핀(2026-06-12 검증). Arduino-ESP32 2.0.17 / IDF 4.4 — 레거시 드라이버만 존재(<code>driver/pulse_cnt.h</code> 없음). 업그레이드 시 버전만 올리고 <code>pio run</code> 재검증. <code>partitions.csv</code> = 3MB APP ×2 (OTA) + 9.9MB LittleFS (16MB), <code>partitions_8MB.csv</code> = 3MB APP ×2 + 1.9MB LittleFS (8MB).</div>
 <h3>도구</h3>
 <p><code>tools/gen_nyan.py</code> — GIF → RGB565 프레임 헤더(<code>src/nyan_frames.h</code>) 생성. LANCZOS 160×120 리사이즈, 프레임/딜레이 자동 추출. <code>python -m pip install Pillow</code> 필요.</p>
+<p><code>tools/gen_schematic.py</code> — 회로도 SVG(<code>docs/schematic_power.svg</code>, <code>docs/schematic_signal.svg</code>) 생성. 표준 라이브러리만 사용. 핀·부품을 바꾸면 스크립트 값을 고치고 <code>python tools/gen_schematic.py</code>.</p>
 </section>
 
 <!-- ───────────────────────────── -->
@@ -662,7 +666,7 @@ pio device monitor --dtr 0 --rts 0               <span class="c"># 시리얼 모
 </section>
 
 <hr>
-<p class="footer">europrocessor 펌웨어 설명서 v4.9.3 · 2026-10-04 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · <code>README.md</code> + 소스 + <code>ISSUES.md</code> 실측 기준</p>
+<p class="footer">europrocessor 펌웨어 설명서 v4.9.3 · 2026-10-24 · ESP32-S3 / PlatformIO / Arduino-ESP32 2.0.17 · <code>README.md</code> + 소스 + <code>ISSUES.md</code> 실측 기준</p>
 
 </main>
 </div>

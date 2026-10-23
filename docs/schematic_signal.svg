@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1220" height="924" viewBox="0 0 1220 924" font-family="'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo','Segoe UI',sans-serif">
+<title>europrocessor 신호 회로</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="30" y="38" font-size="22" text-anchor="start" fill="#1f2328" font-weight="bold">europrocessor 신호 회로 — 바디1 기본 배치 (ESP32-S3 N16R8)</text>
+<text x="30" y="62" font-size="13" text-anchor="start" fill="#57606a" font-weight="normal">핀은 src/PinMap.h DEFAULT_PINS 기준 · 부팅 시 칩 MAC으로 보드별 배치 자동 선택</text>
+<line x1="760" y1="40" x2="794" y2="40" stroke="#1f2328" stroke-width="2"/>
+<text x="802" y="44" font-size="12" text-anchor="start" fill="#1f2328" font-weight="normal">현재 장착</text>
+<line x1="880" y1="40" x2="914" y2="40" stroke="#d9480f" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="922" y="44" font-size="12" text-anchor="start" fill="#d9480f" font-weight="normal">권장·선택 (미장착, ISSUES.md 2-A)</text>
+<rect x="470" y="100" width="260" height="604" rx="6" fill="#eef4ff" stroke="#1f2328" stroke-width="1.6"/>
+<text x="600.0" y="122" font-size="15" text-anchor="middle" fill="#1f2328" font-weight="bold">ESP32-S3-DevKitC-1</text>
+<text x="600.0" y="140" font-size="11" text-anchor="middle" fill="#57606a" font-weight="normal">A변 (3V3 쪽)   |   B변 (5Vin 쪽)</text>
+<rect x="120" y="102" width="150" height="254" rx="6" fill="#f6f8fa" stroke="#1f2328" stroke-width="1.6"/>
+<text x="195.0" y="122" font-size="12" text-anchor="middle" fill="#1f2328" font-weight="bold">ST7789 TFT 320×240</text>
+<text x="195.0" y="136" font-size="10" text-anchor="middle" fill="#57606a" font-weight="normal">하드웨어 SPI (FSPI)</text>
+<text x="262" y="154" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">SCL</text>
+<line x1="270" y1="150" x2="446" y2="150" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="150" x2="470" y2="150" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="154" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO12</text>
+<text x="262" y="188" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">SDA</text>
+<line x1="270" y1="184" x2="446" y2="184" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="184" x2="470" y2="184" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="188" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO11</text>
+<text x="262" y="222" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">CS</text>
+<line x1="270" y1="218" x2="446" y2="218" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="218" x2="470" y2="218" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="222" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO10</text>
+<text x="262" y="256" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">DC</text>
+<line x1="270" y1="252" x2="446" y2="252" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="252" x2="470" y2="252" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="256" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO9</text>
+<text x="262" y="290" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">RES</text>
+<line x1="270" y1="286" x2="446" y2="286" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="286" x2="470" y2="286" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="290" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO8</text>
+<text x="262" y="324" font-size="12" text-anchor="end" fill="#1971c2" font-weight="bold">BLK</text>
+<line x1="270" y1="320" x2="446" y2="320" stroke="#1971c2" stroke-width="1.8"/>
+<line x1="446" y1="320" x2="470" y2="320" stroke="#1971c2" stroke-width="1.8"/>
+<text x="478" y="324" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">GPIO18</text>
+<text x="128" y="346" font-size="11" text-anchor="start" fill="#1971c2" font-weight="normal">VCC ← 3V3 · GND</text>
+<circle cx="300" cy="218" r="3" fill="#d9480f"/>
+<line x1="300" y1="218" x2="300" y2="206" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="300" y1="206" x2="306.0" y2="206" stroke="#d9480f" stroke-width="1.6"/>
+<line x1="334.0" y1="206" x2="340" y2="206" stroke="#d9480f" stroke-width="1.6"/>
+<path d="M306.0,206 L308.0,201 L312.0,211 L316.0,201 L320.0,211 L324.0,201 L328.0,211 L334.0,206" stroke="#d9480f" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="344" y="210" font-size="11" text-anchor="start" fill="#d9480f" font-weight="bold">10k→3V3</text>
+<circle cx="300" cy="286" r="3" fill="#d9480f"/>
+<line x1="300" y1="286" x2="300" y2="274" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="300" y1="274" x2="306.0" y2="274" stroke="#d9480f" stroke-width="1.6"/>
+<line x1="334.0" y1="274" x2="340" y2="274" stroke="#d9480f" stroke-width="1.6"/>
+<path d="M306.0,274 L308.0,269 L312.0,279 L316.0,269 L320.0,279 L324.0,269 L328.0,279 L334.0,274" stroke="#d9480f" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="344" y="278" font-size="11" text-anchor="start" fill="#d9480f" font-weight="bold">10k→3V3</text>
+<rect x="120" y="388" width="150" height="128" rx="6" fill="#f6f8fa" stroke="#1f2328" stroke-width="1.6"/>
+<text x="130" y="406" font-size="12" text-anchor="start" fill="#1f2328" font-weight="bold">EC11</text>
+<text x="130" y="422" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">로터리</text>
+<text x="130" y="436" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">인코더</text>
+<text x="262" y="422" font-size="12" text-anchor="end" fill="#2f9e44" font-weight="bold">A</text>
+<line x1="270" y1="418" x2="446" y2="418" stroke="#2f9e44" stroke-width="1.8"/>
+<line x1="446" y1="418" x2="470" y2="418" stroke="#2f9e44" stroke-width="1.8"/>
+<text x="478" y="422" font-size="12" text-anchor="start" fill="#2f9e44" font-weight="bold">GPIO17</text>
+<text x="262" y="456" font-size="12" text-anchor="end" fill="#2f9e44" font-weight="bold">B</text>
+<line x1="270" y1="452" x2="446" y2="452" stroke="#2f9e44" stroke-width="1.8"/>
+<line x1="446" y1="452" x2="470" y2="452" stroke="#2f9e44" stroke-width="1.8"/>
+<text x="478" y="456" font-size="12" text-anchor="start" fill="#2f9e44" font-weight="bold">GPIO16</text>
+<text x="262" y="490" font-size="12" text-anchor="end" fill="#2f9e44" font-weight="bold">SW</text>
+<line x1="270" y1="486" x2="446" y2="486" stroke="#2f9e44" stroke-width="1.8"/>
+<line x1="446" y1="486" x2="470" y2="486" stroke="#2f9e44" stroke-width="1.8"/>
+<text x="478" y="490" font-size="12" text-anchor="start" fill="#2f9e44" font-weight="bold">GPIO15</text>
+<text x="130" y="452" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">(내부 풀업)</text>
+<text x="130" y="508" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">C·SW2 → GND</text>
+<circle cx="300" cy="418" r="3" fill="#d9480f"/>
+<line x1="300" y1="418" x2="300" y2="406" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="300" y1="406" x2="310" y2="406" stroke="#d9480f" stroke-width="1.4"/>
+<line x1="310" y1="399" x2="310" y2="413" stroke="#d9480f" stroke-width="2"/>
+<line x1="315" y1="399" x2="315" y2="413" stroke="#d9480f" stroke-width="2"/>
+<line x1="315" y1="406" x2="324" y2="406" stroke="#d9480f" stroke-width="1.4"/>
+<text x="328" y="410" font-size="11" text-anchor="start" fill="#d9480f" font-weight="bold">10nF→GND</text>
+<circle cx="300" cy="452" r="3" fill="#d9480f"/>
+<line x1="300" y1="452" x2="300" y2="440" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="300" y1="440" x2="310" y2="440" stroke="#d9480f" stroke-width="1.4"/>
+<line x1="310" y1="433" x2="310" y2="447" stroke="#d9480f" stroke-width="2"/>
+<line x1="315" y1="433" x2="315" y2="447" stroke="#d9480f" stroke-width="2"/>
+<line x1="315" y1="440" x2="324" y2="440" stroke="#d9480f" stroke-width="1.4"/>
+<text x="328" y="444" font-size="11" text-anchor="start" fill="#d9480f" font-weight="bold">10nF→GND</text>
+<line x1="270" y1="584" x2="446" y2="584" stroke="#2f9e44" stroke-width="1.8"/>
+<line x1="446" y1="584" x2="470" y2="584" stroke="#2f9e44" stroke-width="1.8"/>
+<text x="478" y="588" font-size="12" text-anchor="start" fill="#2f9e44" font-weight="bold">GPIO7</text>
+<line x1="270" y1="584" x2="240" y2="584" stroke="#2f9e44" stroke-width="1.8"/>
+<line x1="240" y1="584" x2="240" y2="599.0" stroke="#1f2328" stroke-width="1.6"/>
+<line x1="240" y1="619.0" x2="240" y2="634" stroke="#1f2328" stroke-width="1.6"/>
+<circle cx="240" cy="599.0" r="2.5" fill="#1f2328"/>
+<circle cx="240" cy="619.0" r="2.5" fill="#1f2328"/>
+<line x1="226" y1="599.0" x2="226" y2="619.0" stroke="#1f2328" stroke-width="2"/>
+<line x1="226" y1="609.0" x2="218" y2="609.0" stroke="#1f2328" stroke-width="1.6"/>
+<line x1="218" y1="603.0" x2="218" y2="615.0" stroke="#1f2328" stroke-width="1.6"/>
+<line x1="240" y1="634" x2="240" y2="644" stroke="#1f2328" stroke-width="1.6"/>
+<line x1="231" y1="644" x2="249" y2="644" stroke="#1f2328" stroke-width="2"/>
+<line x1="234" y1="648" x2="246" y2="648" stroke="#1f2328" stroke-width="2"/>
+<line x1="237" y1="652" x2="243" y2="652" stroke="#1f2328" stroke-width="2"/>
+<text x="206" y="588" font-size="12" text-anchor="end" fill="#1f2328" font-weight="bold">KO 버튼</text>
+<text x="206" y="604" font-size="10" text-anchor="end" fill="#57606a" font-weight="normal">(확인/뒤로)</text>
+<text x="478" y="670" font-size="12" text-anchor="start" fill="#1971c2" font-weight="bold">3V3 · GND</text>
+<rect x="880" y="102" width="150" height="186" rx="6" fill="#f6f8fa" stroke="#1f2328" stroke-width="1.6"/>
+<text x="955.0" y="122" font-size="12" text-anchor="middle" fill="#1f2328" font-weight="bold">MAX31865</text>
+<text x="955.0" y="136" font-size="10" text-anchor="middle" fill="#57606a" font-weight="normal">소프트웨어 SPI</text>
+<text x="888" y="154" font-size="12" text-anchor="start" fill="#7048e8" font-weight="bold">CS</text>
+<line x1="754" y1="150" x2="880" y2="150" stroke="#7048e8" stroke-width="1.8"/>
+<line x1="730" y1="150" x2="754" y2="150" stroke="#7048e8" stroke-width="1.8"/>
+<text x="722" y="154" font-size="12" text-anchor="end" fill="#7048e8" font-weight="bold">GPIO13</text>
+<text x="888" y="188" font-size="12" text-anchor="start" fill="#7048e8" font-weight="bold">SDI</text>
+<line x1="754" y1="184" x2="880" y2="184" stroke="#7048e8" stroke-width="1.8"/>
+<line x1="730" y1="184" x2="754" y2="184" stroke="#7048e8" stroke-width="1.8"/>
+<text x="722" y="188" font-size="12" text-anchor="end" fill="#7048e8" font-weight="bold">GPIO14</text>
+<text x="888" y="222" font-size="12" text-anchor="start" fill="#7048e8" font-weight="bold">SDO</text>
+<line x1="754" y1="218" x2="880" y2="218" stroke="#7048e8" stroke-width="1.8"/>
+<line x1="730" y1="218" x2="754" y2="218" stroke="#7048e8" stroke-width="1.8"/>
+<text x="722" y="222" font-size="12" text-anchor="end" fill="#7048e8" font-weight="bold">GPIO21</text>
+<text x="888" y="256" font-size="12" text-anchor="start" fill="#7048e8" font-weight="bold">CLK</text>
+<line x1="754" y1="252" x2="880" y2="252" stroke="#7048e8" stroke-width="1.8"/>
+<line x1="730" y1="252" x2="754" y2="252" stroke="#7048e8" stroke-width="1.8"/>
+<text x="722" y="256" font-size="12" text-anchor="end" fill="#7048e8" font-weight="bold">GPIO47</text>
+<text x="888" y="278" font-size="11" text-anchor="start" fill="#1971c2" font-weight="normal">VIN ← 3V3 · GND</text>
+<text x="1022" y="154" font-size="11" text-anchor="end" fill="#7048e8" font-weight="bold">F+</text>
+<text x="1022" y="188" font-size="11" text-anchor="end" fill="#7048e8" font-weight="bold">RTD+</text>
+<text x="1022" y="222" font-size="11" text-anchor="end" fill="#7048e8" font-weight="bold">RTD−</text>
+<text x="1022" y="256" font-size="11" text-anchor="end" fill="#7048e8" font-weight="bold">F−</text>
+<line x1="1030" y1="150" x2="1070" y2="150" stroke="#c92a2a" stroke-width="2"/>
+<line x1="1030" y1="184" x2="1070" y2="184" stroke="#c92a2a" stroke-width="2"/>
+<line x1="1070" y1="150" x2="1070" y2="184" stroke="#c92a2a" stroke-width="2"/>
+<line x1="1030" y1="218" x2="1090" y2="218" stroke="#495057" stroke-width="2"/>
+<line x1="1070" y1="167.0" x2="1090" y2="167.0" stroke="#c92a2a" stroke-width="2"/>
+<line x1="1090" y1="167.0" x2="1090" y2="178.5" stroke="#1f2328" stroke-width="1.6"/>
+<line x1="1090" y1="206.5" x2="1090" y2="218" stroke="#1f2328" stroke-width="1.6"/>
+<path d="M1090,178.5 L1085,180.5 L1095,184.5 L1085,188.5 L1095,192.5 L1085,196.5 L1095,200.5 L1090,206.5" stroke="#1f2328" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1102" y="191.0" font-size="12" text-anchor="start" fill="#1f2328" font-weight="bold">PT100</text>
+<text x="1102" y="207.0" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">3선식</text>
+<text x="1038" y="256" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">RREF 412Ω · 2/3/4선 점퍼</text>
+<text x="1038" y="272" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">실측 결선(F8): 짝선→F+·RTD+,</text>
+<text x="1038" y="286" font-size="10" text-anchor="start" fill="#57606a" font-weight="normal">단일선→RTD−</text>
+<rect x="880" y="302" width="150" height="198" rx="6" fill="#f6f8fa" stroke="#1f2328" stroke-width="1.6"/>
+<text x="955.0" y="322" font-size="12" text-anchor="middle" fill="#1f2328" font-weight="bold">TMC2209</text>
+<text x="955.0" y="336" font-size="10" text-anchor="middle" fill="#57606a" font-weight="normal">EN LOW=코일 ON</text>
+<text x="888" y="354" font-size="12" text-anchor="start" fill="#c92a2a" font-weight="bold">EN</text>
+<line x1="754" y1="350" x2="880" y2="350" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="730" y1="350" x2="754" y2="350" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="722" y="354" font-size="12" text-anchor="end" fill="#c92a2a" font-weight="bold">GPIO40</text>
+<text x="888" y="388" font-size="12" text-anchor="start" fill="#c92a2a" font-weight="bold">DIR</text>
+<line x1="754" y1="384" x2="880" y2="384" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="730" y1="384" x2="754" y2="384" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="722" y="388" font-size="12" text-anchor="end" fill="#c92a2a" font-weight="bold">GPIO41</text>
+<text x="888" y="422" font-size="12" text-anchor="start" fill="#c92a2a" font-weight="bold">STEP</text>
+<line x1="754" y1="418" x2="880" y2="418" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="730" y1="418" x2="754" y2="418" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="722" y="422" font-size="12" text-anchor="end" fill="#c92a2a" font-weight="bold">GPIO42</text>
+<text x="888" y="456" font-size="12" text-anchor="start" fill="#d9480f" font-weight="bold">DIAG</text>
+<line x1="754" y1="452" x2="880" y2="452" stroke="#d9480f" stroke-width="1.8" stroke-dasharray="5 3"/>
+<line x1="730" y1="452" x2="754" y2="452" stroke="#d9480f" stroke-width="1.8" stroke-dasharray="5 3"/>
+<text x="722" y="456" font-size="12" text-anchor="end" fill="#d9480f" font-weight="bold">GPIO38*</text>
+<text x="888" y="480" font-size="11" text-anchor="start" fill="#1971c2" font-weight="normal">VIO ← 3V3</text>
+<text x="888" y="494" font-size="11" text-anchor="start" fill="#c92a2a" font-weight="normal">VM ← +20V (전원 회로)</text>
+<circle cx="856" cy="350" r="3" fill="#d9480f"/>
+<line x1="856" y1="350" x2="856" y2="338" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="816" y1="338" x2="822.0" y2="338" stroke="#d9480f" stroke-width="1.6"/>
+<line x1="850.0" y1="338" x2="856" y2="338" stroke="#d9480f" stroke-width="1.6"/>
+<path d="M822.0,338 L824.0,333 L828.0,343 L832.0,333 L836.0,343 L840.0,333 L844.0,343 L850.0,338" stroke="#d9480f" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="812" y="342" font-size="11" text-anchor="end" fill="#d9480f" font-weight="bold">10k→3V3</text>
+<circle cx="856" cy="452" r="3" fill="#d9480f"/>
+<line x1="856" y1="452" x2="856" y2="440" stroke="#d9480f" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="816" y1="440" x2="822.0" y2="440" stroke="#d9480f" stroke-width="1.6"/>
+<line x1="850.0" y1="440" x2="856" y2="440" stroke="#d9480f" stroke-width="1.6"/>
+<path d="M822.0,440 L824.0,435 L828.0,445 L832.0,435 L836.0,445 L840.0,435 L844.0,445 L850.0,440" stroke="#d9480f" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="812" y="444" font-size="11" text-anchor="end" fill="#d9480f" font-weight="bold">10k→GND</text>
+<text x="1022" y="354" font-size="11" text-anchor="end" fill="#c92a2a" font-weight="bold">1A</text>
+<line x1="1030" y1="350" x2="1070" y2="350" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="1022" y="388" font-size="11" text-anchor="end" fill="#c92a2a" font-weight="bold">1B</text>
+<line x1="1030" y1="384" x2="1070" y2="384" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="1022" y="422" font-size="11" text-anchor="end" fill="#c92a2a" font-weight="bold">2A</text>
+<line x1="1030" y1="418" x2="1070" y2="418" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="1022" y="456" font-size="11" text-anchor="end" fill="#c92a2a" font-weight="bold">2B</text>
+<line x1="1030" y1="452" x2="1070" y2="452" stroke="#c92a2a" stroke-width="1.8"/>
+<circle cx="1105" cy="401.0" r="34" fill="#fff" stroke="#1f2328" stroke-width="1.8"/>
+<text x="1105" y="408.0" font-size="20" text-anchor="middle" fill="#1f2328" font-weight="bold">M</text>
+<line x1="1070" y1="350" x2="1078" y2="372.95" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="1070" y1="384" x2="1078" y2="391.65" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="1070" y1="418" x2="1078" y2="410.35" stroke="#c92a2a" stroke-width="1.8"/>
+<line x1="1070" y1="452" x2="1078" y2="429.05" stroke="#c92a2a" stroke-width="1.8"/>
+<text x="1105" y="455.0" font-size="11" text-anchor="middle" fill="#1f2328" font-weight="bold">NEMA17</text>
+<text x="1105" y="469.0" font-size="10" text-anchor="middle" fill="#57606a" font-weight="normal">+3.71:1 기어</text>
+<line x1="730" y1="576" x2="754" y2="576" stroke="#d9480f" stroke-width="1.8" stroke-dasharray="5 3"/>
+<text x="722" y="580" font-size="12" text-anchor="end" fill="#d9480f" font-weight="bold">GPIO1*</text>
+<line x1="754" y1="576" x2="794" y2="576" stroke="#d9480f" stroke-width="1.8" stroke-dasharray="5 3"/>
+<text x="802" y="580" font-size="11" text-anchor="start" fill="#d9480f" font-weight="normal">VM 분압 (ADC1, 선택)</text>
+<line x1="730" y1="610" x2="754" y2="610" stroke="#868e96" stroke-width="1.8"/>
+<text x="722" y="614" font-size="12" text-anchor="end" fill="#868e96" font-weight="bold">GPIO43 TX</text>
+<line x1="754" y1="610" x2="794" y2="610" stroke="#868e96" stroke-width="1.8"/>
+<text x="802" y="614" font-size="11" text-anchor="start" fill="#868e96" font-weight="normal">→ USB-TTL RX (크래시 로그)</text>
+<line x1="730" y1="644" x2="754" y2="644" stroke="#868e96" stroke-width="1.8"/>
+<text x="722" y="648" font-size="12" text-anchor="end" fill="#868e96" font-weight="bold">GPIO44 RX</text>
+<line x1="754" y1="644" x2="794" y2="644" stroke="#868e96" stroke-width="1.8"/>
+<text x="802" y="648" font-size="11" text-anchor="start" fill="#868e96" font-weight="normal">← USB-TTL TX (GND 공통, VCC 연결 금지)</text>
+<text x="722" y="670" font-size="12" text-anchor="end" fill="#e67700" font-weight="bold">5V · GND</text>
+<rect x="30" y="734" width="540" height="170" rx="8" fill="#fff" stroke="#d0d7de" stroke-width="1.6"/>
+<text x="46" y="760" font-size="13" text-anchor="start" fill="#1f2328" font-weight="bold">바디2 (N8R2 · 무디스플레이) 핀 — PinMap.h BOARDS[]</text>
+<text x="46" y="788" font-size="12" text-anchor="start" fill="#1f2328" font-weight="bold">TMC2209</text>
+<text x="170" y="788" font-size="12" text-anchor="start" fill="#1f2328" font-weight="normal">STEP 5 · DIR 6 · EN 7 · DIAG 권장 GPIO15</text>
+<text x="46" y="812" font-size="12" text-anchor="start" fill="#1f2328" font-weight="bold">MAX31865</text>
+<text x="170" y="812" font-size="12" text-anchor="start" fill="#1f2328" font-weight="normal">CS 2 · SDI 38 · SDO 39 · CLK 40 (펌웨어 2선 모드)</text>
+<text x="46" y="836" font-size="12" text-anchor="start" fill="#1f2328" font-weight="bold">화면·인코더·KO</text>
+<text x="170" y="836" font-size="12" text-anchor="start" fill="#1f2328" font-weight="normal">없음 — 해당 핀은 구동하지 않음 (hasDisplay=false)</text>
+<text x="46" y="864" font-size="11" text-anchor="start" fill="#57606a" font-weight="normal">바디1의 MAX31865는 보드 불량으로 격리 (rtdWires=0, 화면 --.-)</text>
+<text x="46" y="886" font-size="11" text-anchor="start" fill="#d9480f" font-weight="normal">* 표시 = 권장 배선 핀 (배선 후 PinMap.h diagPin/vmPin에 등록해야 동작)</text>
+<rect x="590" y="734" width="580" height="170" rx="8" fill="#fff" stroke="#d0d7de" stroke-width="1.6"/>
+<text x="606" y="760" font-size="13" text-anchor="start" fill="#1f2328" font-weight="bold">메모</text>
+<text x="606" y="786" font-size="11.5" text-anchor="start" fill="#1f2328" font-weight="normal">금지 GPIO: 0·3·45·46(스트래핑) 19·20(USB) 26~37(Flash/PSRAM) 43·44 48</text>
+<text x="606" y="807" font-size="11.5" text-anchor="start" fill="#57606a" font-weight="normal">→ PinMap.h static_assert가 빌드 단계에서 차단</text>
+<text x="606" y="828" font-size="11.5" text-anchor="start" fill="#1f2328" font-weight="normal">인코더 A/B는 GPIO 0~31만 (ISR이 GPIO_IN_REG 직접 읽음)</text>
+<text x="606" y="849" font-size="11.5" text-anchor="start" fill="#1f2328" font-weight="normal">EN 10k 풀업(H1): 부팅·리셋 중 코일 통전 방지 — 가장 먼저 권장</text>
+<text x="606" y="870" font-size="11.5" text-anchor="start" fill="#1f2328" font-weight="normal">DIAG(H2): 10k 풀다운, VIO 3.3V 확인 후 연결</text>
+<text x="606" y="891" font-size="11.5" text-anchor="start" fill="#1f2328" font-weight="normal">TFT CS·RES 풀업(H9), 인코더 10nF(H8): 노이즈 대책</text>
+</svg>
