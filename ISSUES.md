@@ -22,7 +22,7 @@
 | 핀 | 기본 배치 (STEP 42, DIR 41, EN 40 / MAX 13·14·21·47) | STEP 5, DIR 6, EN 7 / MAX CS 2·MOSI 38·MISO 39·CLK 40 |
 | 보드 번호 / AP | 1 / `europrocessor_2` → `europrocessor-2.local`, 192.168.4.1 | 2 / `FilmProcessor` → `filmprocessor.local`, 192.168.5.1 |
 | STA(홈 WiFi) | 바디2 AP `FilmProcessor`에 DHCP 연결 (마지막 192.168.5.3) | `KT_GiGA_57B5` 설정 남아 있음 |
-| 온도센서 | 격리 (`rtdWires=0`, MAX31865 보드 불량) | 2선 모드, 보정 미저장 (F8) |
+| 온도센서 | 2선 모드, RREF 431Ω(실측), 보정 미저장 | 2선 모드, 보정 미저장 (F8) |
 | 특이사항 | **무선 수신 감도 저하** (F7) | — |
 
 ### 사용 구성 (집 WiFi 없이)

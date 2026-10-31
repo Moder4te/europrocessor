@@ -141,7 +141,7 @@ v4.9~v4.9.3에서 정전·리셋 복구, 하드웨어 감시(DIAG/VM), 기존 �
 <tr><td><b>MCU</b></td><td>ESP32-S3, 듀얼코어 Xtensa LX7. 사양 2종: <b>N16R8</b>(16MB Flash / 8MB Octal PSRAM, 바디1) · <b>N8R2</b>(8MB Flash / 2MB Quad PSRAM, 바디2) — 빌드 환경이 다름(15장)</td></tr>
 <tr><td><b>모터</b></td><td>NEMA17 + 3.71:1 유성기어, 1.8°/스텝 (200 step/rev)</td></tr>
 <tr><td><b>드라이버</b></td><td>TMC2209 (STEP/DIR/EN), StealthChop, 1/8 마이크로스텝 → 1600 step/rev</td></tr>
-<tr><td><b>온도센서</b></td><td>MAX31865 + PT100, RREF 412Ω·RNOMINAL 100Ω. 사용 여부·결선은 <b>보드별</b>(<code>PinMap.h</code> <code>rtdWires</code>): 바디1 격리(보드 불량), 바디2 2선 모드. 선형 보정 지원(16장)</td></tr>
+<tr><td><b>온도센서</b></td><td>MAX31865 + PT100, RNOMINAL 100Ω. 사용 여부·결선·RREF는 <b>보드별</b>(<code>PinMap.h</code> <code>rtdWires</code>·<code>rref</code>): 바디1 2선 모드·RREF 431Ω(실측), 바디2 2선 모드·RREF 412Ω. 선형 보정 지원(16장)</td></tr>
 <tr><td><b>디스플레이</b></td><td>ST7789 320×240 TFT (하드웨어 FSPI) — 패널 색반전 보정 <code>invertDisplay(false)</code>. 무디스플레이 보드는 <code>hasDisplay=false</code></td></tr>
 <tr><td><b>입력</b></td><td>EC11 로터리 인코더(A/B/PUSH) + 확정 버튼(KO)</td></tr>
 <tr><td><b>전원</b></td><td>USB-PD 100W → CH224K 디코이 20V 트리거 → 모터 직결 + 벅(20V→5V)→ESP</td></tr>
@@ -506,7 +506,7 @@ spi_flash_op_block_func → shared_intr_isr → <span class="k">pcnt_intr_servic
 <tr><td><code>Cfg::RAMP_SEC</code></td><td>2.0</td><td>0→설정RPM 도달 시간(가속·감속). 목표속도 기준 per-run 계산</td></tr>
 <tr><td><code>Cfg::SCURVE_HANDOVER</code></td><td>0.5</td><td>S-커브 저크제한 구간 비율(목표속도의 f까지 소프트스타트)</td></tr>
 <tr><td><code>Cfg::REST_MS</code></td><td>2000</td><td>방향전환 휴지 (관성 안정 + TMC 열관리)</td></tr>
-<tr><td><code>Cfg::RREF</code> / <code>RNOMINAL</code></td><td>412 / 100 Ω</td><td>MAX31865 기준저항 / PT100 공칭</td></tr>
+<tr><td><code>Cfg::RREF</code> / <code>RNOMINAL</code></td><td>412 / 100 Ω</td><td>MAX31865 기준저항 기본값(보드별 <code>BOARDS[].rref</code>가 우선) / PT100 공칭</td></tr>
 <tr><td><code>Cfg::TEMP_FAULT_CLEAR_AFTER</code></td><td>5</td><td>연속 fault N회 후만 clear</td></tr>
 <tr><td><code>Cfg::TEMP_UNREAD</code></td><td>-999.0</td><td>미독취 센티넬</td></tr>
 <tr><td><code>Cfg::TEMP_MAX_STEP_C</code> / <code>TEMP_SPIKE_ACCEPT_AFTER</code></td><td>2.0 / 3</td><td>1초 점프 상한 / 연속 N회면 실제 변화로 수용</td></tr>

@@ -62,7 +62,7 @@ void TemperatureSensor::begin() {
                                                 : MAX31865_2WIRE;
     _sensor.begin(wm);
     Serial.printf("[MAX31865] 초기화 완료 (%dWIRE, RREF=%.1f)\n",
-                  (int)wires, (double)Cfg::RREF);
+                  (int)wires, (double)boardRref());
 
     // ── 진단 B: SPI 라운드트립 자가진단 (결과는 tempTask가 반복 출력) ──
     //   threshold 레지스터(읽기·쓰기 가능, RTD 아날로그단과 무관)에 알려진 값을
@@ -144,7 +144,7 @@ void TemperatureSensor::taskLoop() {
         //   raw 0x0000(SDO LOW 고정) / 0x7FFF(SDO HIGH·floating) → 미통신(배선/전원)
         //   raw 중간값 + fault → 실제 RTD 단선/단락 또는 임계값 초과
         uint16_t raw = _sensor.readRTD();
-        const float ohm = raw * Cfg::RREF / 32768.0f;                 // 보정 전 저항
+        const float ohm = raw * boardRref() / 32768.0f;               // 보정 전 저항 (보드별 RREF)
         float    t   = ohmToCelsius(_calGain * ohm + _calOffset);         // 보정 후 온도
         uint8_t  f   = _sensor.readFault();
         const bool noComm = (raw == 0x0000 || raw == 0x7FFF);

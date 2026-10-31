@@ -1036,7 +1036,7 @@ static void renderInfoFull() {
     snprintf(buf, sizeof(buf), "MAC         : %s", boardMac()); line(buf);
     snprintf(buf, sizeof(buf), "Pin profile : %s", pinProfileLabel()); line(buf);
     line("Motor       : NEMA17 + TMC2209 (1/8 microstep)");
-    line("Temp        : MAX31865 + PT100 (RREF 412 ohm)");
+    snprintf(buf, sizeof(buf), "Temp        : MAX31865 + PT100 (RREF %.0f ohm)", (double)boardRref()); line(buf);
     snprintf(buf, sizeof(buf), "AP IP       : %s", WiFi.softAPIP().toString().c_str()); line(buf);
     snprintf(buf, sizeof(buf), "STA         : %s",
              (WiFi.status() == WL_CONNECTED) ? "Connected" : "Disconnected"); line(buf);

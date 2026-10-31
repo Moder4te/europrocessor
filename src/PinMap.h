@@ -45,12 +45,13 @@ struct BoardPins {
     uint8_t     diagPin;     // TMC2209 DIAG (HIGH = 과열·단락 등 드라이버 고장) — 외부 10k 풀다운 권장
     uint8_t     vmPin;       // 모터 전원 VM 분압 ADC 핀 (ADC1: GPIO1~10만)
     float       vmRatio;     // 분압비 (예: 100k/10k → 11.0) — VM = 핀전압 × vmRatio
+    float       rref;        // MAX31865 기준저항 실측값 (Ω). 0 = 기본값 Cfg::RREF
 };
 
 // ★보드별 배치 — 배선이 기본과 다른 보드만 추가★
 //   무디스플레이 보드는 앞 7개(STEP DIR EN | CS MOSI MISO CLK)만 쓰고 나머지는 생략(0) + hasDisplay=false
 constexpr BoardPins BOARDS[] = {
-    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS, true, 0 },   // MAX31865 보드 불량 → 격리
+    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS, true, 2, 0, 0, 0.0f, 431.0f },   // PT100 2선식, MAX31865 교체 보드 RREF 실측 431Ω
     // 구버전 무디스플레이 바디 (v2.2~v3.1.3 rotary_processor_nodisplay.ino 핀 정의)
     { "D0:CF:13:59:14:78", "바디2 (무디스플레이)", { 5, 6, 7,  2, 38, 39, 40 }, false, 2 },   // 임시 2선 모드: 3선 결선(A)이지만 보드 3선 점퍼 구조 확인 전까지 (리드선만큼 ~1°C 높게 읽힘)
 };
@@ -64,6 +65,7 @@ uint8_t       boardRtdWires();     // 0 = 온도센서 미사용. 미등록 보�
 uint8_t       boardDiagPin();      // 0 = 미배선
 uint8_t       boardVmPin();        // 0 = 미배선
 float         boardVmRatio();
+float         boardRref();         // MAX31865 기준저항 (Ω). 미등록/0이면 Cfg::RREF
 
 // ── 컴파일 타임 검증 (C++11 constexpr — 재귀) ─────────────────────
 namespace pinmap_check {
@@ -104,12 +106,14 @@ namespace pinmap_check {
             && (b.vmPin == 0 || (b.vmPin >= 1 && b.vmPin <= 10 && b.vmRatio > 1.0f && b.vmPin != b.diagPin
                                  && !inPins(b.pins, b.hasDisplay ? N : N_CORE, b.vmPin)));
     }
+    // RREF: 0(기본값) 또는 실측 범위 300~500Ω (PT100 보드는 보통 400~430Ω대)
+    constexpr bool rrefOk(float r) { return r == 0.0f || (r >= 300.0f && r <= 500.0f); }
     constexpr bool allValid(int i = 0) {
         return i >= COUNT ? true : (valid(BOARDS[i].pins, BOARDS[i].hasDisplay) && wiresOk(BOARDS[i].rtdWires)
-                                    && extraOk(BOARDS[i]) && allValid(i + 1));
+                                    && extraOk(BOARDS[i]) && rrefOk(BOARDS[i].rref) && allValid(i + 1));
     }
 }
 static_assert(pinmap_check::valid(DEFAULT_PINS),
               "DEFAULT_PINS: 금지 GPIO / 중복 핀 / 인코더 핀(>=32) 확인");
 static_assert(pinmap_check::allValid(),
-              "BOARDS[]: 금지 GPIO(0,3,19,20,26~37,43~48) / 중복 핀 / 인코더 핀(>=32) 확인");
+              "BOARDS[]: 금지 GPIO(0,3,19,20,26~37,43~48) / 중복 핀 / 인코더 핀(>=32) / RREF(0 또는 300~500) 확인");

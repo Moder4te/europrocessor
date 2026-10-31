@@ -1,4 +1,5 @@
 #include "PinMap.h"
+#include "Config.h"     // Cfg::RREF (보드별 rref 미지정 시 기본값)
 #include <esp_system.h>   // esp_efuse_mac_get_default (IDF 4.4)
 #include <cstring>
 
@@ -11,6 +12,7 @@ struct Active {
     uint8_t       diagPin    = 0;
     uint8_t       vmPin      = 0;
     float         vmRatio    = 0.0f;
+    float         rref       = 0.0f;
     char          mac[18] = "";
 };
 // 함수 내 static — 다른 전역 객체 생성자(TFT/MAX31865)가 먼저 불러도 그 시점에 1회 초기화
@@ -22,7 +24,7 @@ const Active& active() {
         snprintf(r.mac, sizeof(r.mac), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
         for (const BoardPins& b : BOARDS) {
             if (strcmp(b.mac, r.mac) == 0) { r.pins = &b.pins; r.label = b.label; r.hasDisplay = b.hasDisplay; r.rtdWires = b.rtdWires;
-                r.diagPin = b.diagPin; r.vmPin = b.vmPin; r.vmRatio = b.vmRatio; break; }
+                r.diagPin = b.diagPin; r.vmPin = b.vmPin; r.vmRatio = b.vmRatio; r.rref = b.rref; break; }
         }
         return r;
     }();
@@ -38,3 +40,4 @@ uint8_t       boardRtdWires()   { return active().rtdWires; }
 uint8_t       boardDiagPin()    { return active().diagPin; }
 uint8_t       boardVmPin()      { return active().vmPin; }
 float         boardVmRatio()    { return active().vmRatio; }
+float         boardRref()       { return active().rref > 0.0f ? active().rref : Cfg::RREF; }
