@@ -45,14 +45,16 @@ struct BoardPins {
     uint8_t     diagPin;     // TMC2209 DIAG (HIGH = 과열·단락 등 드라이버 고장) — 외부 10k 풀다운 권장
     uint8_t     vmPin;       // 모터 전원 VM 분압 ADC 핀 (ADC1: GPIO1~10만)
     float       vmRatio;     // 분압비 (예: 100k/10k → 11.0) — VM = 핀전압 × vmRatio
+    float       rref;        // MAX31865 기준저항 실측값(Ω). 0 = Config.h Cfg::RREF 사용 (보드마다 Rref가 달라서 분리)
 };
 
 // ★보드별 배치 — 배선이 기본과 다른 보드만 추가★
 //   무디스플레이 보드는 앞 7개(STEP DIR EN | CS MOSI MISO CLK)만 쓰고 나머지는 생략(0) + hasDisplay=false
 constexpr BoardPins BOARDS[] = {
-    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS, true, 0 },   // MAX31865 보드 불량 → 격리
+    { "A0:F2:62:E5:D9:B0", "바디1 (기본 배선)", DEFAULT_PINS, true, 3, 0, 0, 0.0f, 417.0f },   // Rref 실측 417Ω. MAX31865 재연결 (예전 "보드 불량"은 SPI.begin이 CS(GPIO13)를 뺏던 SW 버그 — DisplayUI.cpp 수정). 3선 — 보드 점퍼와 다르면 2/4로
     // 구버전 무디스플레이 바디 (v2.2~v3.1.3 rotary_processor_nodisplay.ino 핀 정의)
     { "D0:CF:13:59:14:78", "바디2 (무디스플레이)", { 5, 6, 7,  2, 38, 39, 40 }, false, 2 },   // 임시 2선 모드: 3선 결선(A)이지만 보드 3선 점퍼 구조 확인 전까지 (리드선만큼 ~1°C 높게 읽힘)
+    { "AC:A7:04:13:72:D8", "바디3 (디스플레이 N16R8)", DEFAULT_PINS, true, 3, 38, 0, 0.0f, 430.0f },   // 모터 42/41/40 + MAX31865 13/14/21/47, 3선 결선·3선 설정, DIAG GPIO38 (VM 감시 미배선), Rref 430Ω
 };
 
 // 부팅 시 선택된 배치 (MAC 매칭, 없으면 DEFAULT_PINS). 정적 초기화 중 호출해도 안전.
@@ -64,6 +66,7 @@ uint8_t       boardRtdWires();     // 0 = 온도센서 미사용. 미등록 보�
 uint8_t       boardDiagPin();      // 0 = 미배선
 uint8_t       boardVmPin();        // 0 = 미배선
 float         boardVmRatio();
+float         boardRref();         // 0 = 보드별 지정 없음 → Cfg::RREF
 
 // ── 컴파일 타임 검증 (C++11 constexpr — 재귀) ─────────────────────
 namespace pinmap_check {

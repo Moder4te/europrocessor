@@ -1156,6 +1156,14 @@ static void initTft() {
     SPI.begin(pins().TFT_SCK, -1, pins().TFT_MOSI);
     Serial.println("[TFT] step3: SPI.begin");
     tft.init(240, 320);
+    // ★MAX31865 CS 복구★ — arduino-esp32 2.x의 SPI.begin(sck, -1, mosi)는 MISO=-1이면
+    //   S3 FSPI 기본 MISO(GPIO13)를 pinMode(INPUT)으로 잡아버림. 기본 핀배치에서 13 = MAX31865 CS라
+    //   CS가 출력이 아니게 되어 이후 온도 SPI 전부 무응답(raw=0, 부팅 자가진단만 통과).
+    //   (바디1 "MAX31865 보드 불량"도 이 증상) → CS를 다시 출력 HIGH(비선택)로.
+    if (boardRtdWires() && pins().MAX_CS) {
+        pinMode(pins().MAX_CS, OUTPUT);
+        digitalWrite(pins().MAX_CS, HIGH);
+    }
     Serial.println("[TFT] step4: tft.init OK");
     tft.setSPISpeed(26000000);
     tft.setRotation(3);

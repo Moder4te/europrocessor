@@ -133,8 +133,13 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <span class="card-title" data-i18n="recipes"></span>
-      <button class="btn btn-primary btn-sm" onclick="addRecipe()" data-i18n="add_recipe"></button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="exportAll()" data-i18n="exp_all"></button>
+        <button class="btn btn-outline btn-sm" onclick="document.getElementById('imp-file').click()" data-i18n="imp_btn"></button>
+        <button class="btn btn-primary btn-sm" onclick="addRecipe()" data-i18n="add_recipe"></button>
+      </div>
     </div>
+    <input type="file" id="imp-file" accept=".json,application/json" style="display:none" onchange="importFile(this)">
     <div id="save-st" style="font-size:12px;margin:-4px 0 8px;min-height:16px;color:var(--muted);"></div>
     <ul class="recipe-list" id="recipe-list"></ul>
     <div id="recipe-empty" class="empty-state" style="display:none;">
@@ -144,7 +149,10 @@ h2{font-size:19px;font-weight:800;margin-bottom:12px;}
   <div class="card" id="step-editor" style="display:none;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <span class="card-title" id="step-editor-title"></span>
-      <button class="btn btn-danger btn-sm" onclick="deleteSelectedRecipe()" data-i18n="del_recipe"></button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="exportSel()" data-i18n="exp_one"></button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSelectedRecipe()" data-i18n="del_recipe"></button>
+      </div>
     </div>
     <div id="step-list"></div>
     <div class="row-act">
@@ -476,6 +484,11 @@ const STR={
     saver_proc:'이미지 처리 중…',saver_up:'업로드 중…',
     ph_step_name:'단계 이름',lbl_power:'속도(RPM)',lbl_dur:'시간(초)',lbl_rot:'방향전환(초)',
     confirm_del:'이 레시피를 삭제하시겠습니까?',
+    exp_all:'⬇ 전체 내보내기',exp_one:'⬇ 내보내기',imp_btn:'⬆ 가져오기',
+    exp_empty:'내보낼 레시피가 없습니다.',imp_bad:'레시피 파일이 아니거나 손상된 파일입니다.',imp_none:'가져올 레시피가 없습니다.',
+    imp_confirm:'레시피 {n}개를 가져와 기존 목록에 추가합니다.\n({c})\n\n같은 이름·같은 내용은 건너뛰고, 이름만 같으면 (2)를 붙입니다. 계속할까요?',
+    imp_big:'가져오면 레시피 저장 용량(64KB)을 넘습니다. 일부 레시피만 내보낸 파일로 다시 시도하세요.',
+    imp_done:'가져오기 완료 — 추가 {a}개, 중복 건너뜀 {d}개, 이름 변경 {r}개',
     confirm_run:'레시피를 실행합니다. 현재 동작이 중단됩니다.',
     prompt_name:'레시피 이름:',default_name:'새 레시피',
     warn_no_steps:'단계를 먼저 추가해주세요.',warn_no_sel:'레시피를 먼저 선택해주세요.',
@@ -553,6 +566,11 @@ const STR={
     saver_proc:'Processing image…',saver_up:'Uploading…',
     ph_step_name:'Step name',lbl_power:'Speed(RPM)',lbl_dur:'Duration(s)',lbl_rot:'Rotation(s)',
     confirm_del:'Delete this recipe?',
+    exp_all:'⬇ Export all',exp_one:'⬇ Export',imp_btn:'⬆ Import',
+    exp_empty:'No recipes to export.',imp_bad:'Not a recipe file, or the file is damaged.',imp_none:'No recipes to import.',
+    imp_confirm:'Import {n} recipe(s) and add them to the current list.\n({c})\n\nIdentical recipes are skipped; same name with different steps gets a (2) suffix. Continue?',
+    imp_big:'Importing would exceed the 64KB recipe storage limit. Try a file with fewer recipes.',
+    imp_done:'Import done — added {a}, skipped duplicates {d}, renamed {r}',
     confirm_run:'Run recipe? Current operation will stop.',
     prompt_name:'Recipe name:',default_name:'New Recipe',
     warn_no_steps:'Add steps first.',warn_no_sel:'Select a recipe first.',
@@ -690,6 +708,78 @@ function addStep(){if(selIdx<0)return;const ss=recipes[activeCat][selIdx].steps;
 function rmS(i){recipes[activeCat][selIdx].steps.splice(i,1);saveR(recipes);renderStepEditor();}
 function mvS(i,d){const ss=recipes[activeCat][selIdx].steps,j=i+d;if(j<0||j>=ss.length)return;[ss[i],ss[j]]=[ss[j],ss[i]];saveR(recipes);renderStepEditor();}
 function updS(i,k,v){recipes[activeCat][selIdx].steps[i][k]=v;saveR(recipes);}
+
+// ── 레시피 파일 내보내기/가져오기 ──
+//   파일 형식: {"type":"europrocessor-recipes","v":1,"recipes":{"B&W":[...],...}} — 단일·전체 공통.
+//   가져오기는 이 형식 + 보드의 /recipes.json 원본 + 레시피 객체 하나({name,steps})도 받음.
+//   기존 목록에 추가(덮어쓰지 않음): 같은 이름·같은 단계 = 건너뜀, 이름만 같음 = " (2)" 붙임.
+//   저장은 기존 saveR 경유 → 운전 중이면 정지 후 자동 저장(보드 409 정책 그대로).
+const RX_TYPE='europrocessor-recipes',RX_MAX=65536;
+function rxInt(v,d,lo,hi){v=Math.round(Number(v));if(!Number.isFinite(v))v=d;return Math.min(hi,Math.max(lo,v));}
+function rxStep(s){
+  if(!s||typeof s!=='object')return null;
+  return {name:String(s.name??'').slice(0,40),speedRpm:rxInt(s.speedRpm,50,1,80),
+          durSec:rxInt(s.durSec,60,1,86400),rotIntSec:rxInt(s.rotIntSec,30,5,86400)};
+}
+function rxRecipe(r){
+  if(!r||typeof r!=='object'||!Array.isArray(r.steps))return null;
+  const name=String(r.name??'').trim().slice(0,40)||'Imported';
+  return {name,steps:r.steps.map(rxStep).filter(Boolean)};
+}
+function rxParse(o){
+  if(!o||typeof o!=='object')return null;
+  const src=(o.type===RX_TYPE&&o.recipes&&typeof o.recipes==='object')?o.recipes:o;
+  const out=[];let found=false;
+  CATS.forEach(c=>{if(Array.isArray(src[c])){found=true;src[c].forEach(r=>{const x=rxRecipe(r);if(x)out.push({cat:c,rec:x});});}});
+  if(!found){const x=rxRecipe(o);if(x){found=true;out.push({cat:activeCat,rec:x});}}
+  return found?out:null;
+}
+function rxMerge(list){
+  const next=JSON.parse(JSON.stringify(recipes));CATS.forEach(c=>{if(!Array.isArray(next[c]))next[c]=[];});
+  const key=r=>JSON.stringify((rxRecipe(r)||{steps:[]}).steps);
+  let a=0,d=0,rn=0;
+  list.forEach(({cat,rec})=>{
+    const arr=next[cat],k=key(rec);
+    if(arr.some(x=>x.name===rec.name&&key(x)===k)){d++;return;}
+    let nm=rec.name,i=2;while(arr.some(x=>x.name===nm))nm=rec.name+' ('+(i++)+')';
+    if(nm!==rec.name)rn++;
+    arr.push({name:nm,steps:rec.steps});a++;
+  });
+  return {next,a,d,rn};
+}
+function rxFn(s){return String(s).replace(/[\\/:*?"<>|\s&]+/g,'_').slice(0,40)||'recipe';}
+function rxDate(){const d=new Date(),p=n=>String(n).padStart(2,'0');return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate());}
+function rxDownload(obj,fname){
+  const b=new Blob([JSON.stringify(obj,null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=fname;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
+}
+function exportAll(){
+  if(!CATS.some(c=>(recipes[c]||[]).length)){alert(t('exp_empty'));return;}
+  const o={};CATS.forEach(c=>o[c]=recipes[c]||[]);
+  rxDownload({type:RX_TYPE,v:1,recipes:o},'recipes_'+rxFn(location.hostname)+'_'+rxDate()+'.json');
+}
+function exportSel(){
+  const r=(recipes[activeCat]||[])[selIdx];if(!r)return;
+  rxDownload({type:RX_TYPE,v:1,recipes:{[activeCat]:[r]}},'recipe_'+rxFn(activeCat)+'_'+rxFn(r.name)+'.json');
+}
+async function importFile(inp){
+  const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
+  let list=null;
+  try{list=rxParse(JSON.parse(await f.text()));}catch(e){list=null;}
+  if(!list){alert(t('imp_bad'));return;}
+  if(!list.length){alert(t('imp_none'));return;}
+  const cnt={};list.forEach(x=>cnt[x.cat]=(cnt[x.cat]||0)+1);
+  const c=Object.keys(cnt).map(k=>k+' '+cnt[k]).join(', ');
+  if(!confirm(t('imp_confirm').replace('{n}',list.length).replace('{c}',c)))return;
+  const m=rxMerge(list);
+  if(new Blob([JSON.stringify(m.next)]).size>RX_MAX){alert(t('imp_big'));return;}
+  if(m.a){recipes=m.next;saveR(recipes);
+    const first=list.find(x=>x.cat)||{};if(first.cat){activeCat=first.cat;selIdx=-1;}
+    renderCatTabs();renderRecipeList();renderStepEditor();}
+  alert(t('imp_done').replace('{a}',m.a).replace('{d}',m.d).replace('{r}',m.rn));
+}
 
 // ── 동시 제어 (이 보드 = 마스터, AP에 붙은 다른 보드 = 피어) ──
 //   켜면 이 화면의 모든 제어 명령이 선택된 피어에도 전달됨. 피어는 MAC으로 기억(IP 바뀌어도 유지).
