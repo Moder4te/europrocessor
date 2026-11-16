@@ -39,7 +39,7 @@ namespace Cfg {
     // 온도센서 유무·결선(2/3/4선)은 보드별 → PinMap.h BOARDS[].rtdWires
 
     // MAX31865 (RREF 실측 하드코딩)
-    constexpr float RREF     = 412.0f;
+    constexpr float RREF     = 412.0f;   // 기본값(원래 실측값). 보드별 값은 PinMap.h BOARDS의 rref로 지정
     constexpr float RNOMINAL = 100.0f;
     constexpr uint16_t TEMP_FAULT_CLEAR_AFTER = 5;  // 연속 fault N회 후만 clear
 

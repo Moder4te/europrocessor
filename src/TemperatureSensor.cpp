@@ -2,6 +2,61 @@
 #include <esp_task_wdt.h>
 #include <Preferences.h>
 
+// ★진단 스위치★ 1 = MAX31865 바이어스 상시 ON (온도 측정 정지). 평소엔 반드시 0.
+#define MAX_BIAS_PROBE 0   // 0=평상시, 1=바이어스 상시 ON(전압 측정용), 2=레지스터 직접 진단(라이브러리 우회)
+
+#if MAX_BIAS_PROBE == 2
+// ── 레지스터 직접 진단 — Adafruit 라이브러리를 거치지 않고 비트뱅 SPI(mode 1)로 칩과 직접 통신 ──
+//   목적: "1-shot 변환이 실제로 일어나는가 / 자동변환은 되는가 / 3선·2선 설정별 결과" 를 구분.
+namespace {
+inline void pClk(bool v){ digitalWrite(pins().MAX_CLK, v); }
+uint8_t pXfer(uint8_t out){
+    uint8_t in = 0;
+    for (int b = 7; b >= 0; --b) {
+        pClk(1); digitalWrite(pins().MAX_MOSI, (out >> b) & 1); delayMicroseconds(2);
+        pClk(0); in = (in << 1) | (digitalRead(pins().MAX_MISO) & 1); delayMicroseconds(2);
+    }
+    return in;
+}
+void pWr(uint8_t a, uint8_t v){ pClk(0); digitalWrite(pins().MAX_CS, LOW); pXfer(a | 0x80); pXfer(v); digitalWrite(pins().MAX_CS, HIGH); }
+uint8_t pRd(uint8_t a){ pClk(0); digitalWrite(pins().MAX_CS, LOW); pXfer(a & 0x7F); uint8_t v = pXfer(0xFF); digitalWrite(pins().MAX_CS, HIGH); return v; }
+uint16_t pRtd(){ pClk(0); digitalWrite(pins().MAX_CS, LOW); pXfer(0x01); uint16_t v = (uint16_t)pXfer(0xFF) << 8; v |= pXfer(0xFF); digitalWrite(pins().MAX_CS, HIGH); return v; }
+
+void rawProbeTask(void*){
+    pinMode(pins().MAX_CS, OUTPUT); pinMode(pins().MAX_MOSI, OUTPUT);
+    pinMode(pins().MAX_CLK, OUTPUT); pinMode(pins().MAX_MISO, INPUT);
+    digitalWrite(pins().MAX_CS, HIGH); pClk(0);
+    for (int cyc = 1;; ++cyc) {
+        for (uint8_t wire : { (uint8_t)0x10, (uint8_t)0x00 }) {          // 3선(D4=1), 2선(D4=0)
+            const char* wn = wire ? "3선" : "2선";
+            // A) 1-shot — 라이브러리 readRTD와 같은 순서, 각 단계 config 되읽기
+            pWr(0x00, wire | 0x02);                  delay(2);            // fault clear
+            uint8_t c0 = pRd(0x00);
+            pWr(0x00, wire | 0x80);                  delay(10);           // bias ON
+            uint8_t c1 = pRd(0x00);
+            pWr(0x00, wire | 0x80 | 0x20);           delay(1);            // 1-shot 시작
+            uint8_t c2 = pRd(0x00);                                       // D5=1이면 변환 진행 중
+            delay(70);
+            uint8_t c3 = pRd(0x00);                                       // D5=0이면 변환 완료
+            uint16_t r1 = pRtd(); uint8_t f1 = pRd(0x07);
+            Serial.printf("[PROBE#%d %s 1-shot] cfg clr=%02X bias=%02X start=%02X end=%02X | raw=0x%04X(%u) fault=%02X\n",
+                          cyc, wn, c0, c1, c2, c3, r1, (unsigned)(r1 >> 1), f1);
+            // B) 자동 변환 (bias + auto) — 연속 3회
+            pWr(0x00, wire | 0xC0);                  delay(200);
+            uint16_t a1 = pRtd(); delay(100); uint16_t a2 = pRtd(); delay(100); uint16_t a3 = pRtd();
+            uint8_t ca = pRd(0x00), fa = pRd(0x07);
+            Serial.printf("[PROBE#%d %s auto  ] cfg=%02X raw=0x%04X 0x%04X 0x%04X fault=%02X\n",
+                          cyc, wn, ca, a1, a2, a3, fa);
+            pWr(0x00, wire | 0x02);                                       // bias OFF + clear
+            delay(300);
+        }
+        Serial.println("[PROBE] ---- (3초 후 반복) ----");
+        delay(3000);
+    }
+}
+}  // namespace
+#endif
+
 // PT100 (IEC 60751): R(t) = R0·[1 + A·t + B·t² + C·(t−100)·t³], C는 t<0에서만
 float TemperatureSensor::celsiusToOhm(float t) {
     const float A = 3.9083e-3f, B = -5.775e-7f, C = -4.183e-12f;
@@ -38,6 +93,9 @@ float TemperatureSensor::rtdOhm() const {
 TemperatureSensor::TemperatureSensor()
     : _sensor(pins().MAX_CS, pins().MAX_MOSI, pins().MAX_MISO, pins().MAX_CLK) {}
 
+// 이 보드의 기준저항 — PinMap.h에 보드별 값이 있으면 그것, 없으면 Config.h 기본값
+static float rref() { const float r = boardRref(); return r > 0.0f ? r : Cfg::RREF; }
+
 void TemperatureSensor::begin() {
     const uint8_t wires = boardRtdWires();   // 보드별 (PinMap.h)
     if (wires == 0) {
@@ -62,7 +120,7 @@ void TemperatureSensor::begin() {
                                                 : MAX31865_2WIRE;
     _sensor.begin(wm);
     Serial.printf("[MAX31865] 초기화 완료 (%dWIRE, RREF=%.1f)\n",
-                  (int)wires, (double)Cfg::RREF);
+                  (int)wires, (double)rref());
 
     // ── 진단 B: SPI 라운드트립 자가진단 (결과는 tempTask가 반복 출력) ──
     //   threshold 레지스터(읽기·쓰기 가능, RTD 아날로그단과 무관)에 알려진 값을
@@ -79,6 +137,18 @@ void TemperatureSensor::begin() {
         _sensor.clearFault();
     }
 
+#if MAX_BIAS_PROBE == 1
+    // ★진단 전용★ 바이어스를 켠 채로 두고 tempTask를 만들지 않음
+    //   (readRTD가 매 측정 후 바이어스를 끄므로 태스크가 돌면 멀티미터로 못 잼)
+    _sensor.enableBias(true);
+    Serial.println("[MAX31865] ★바이어스 상시 ON 진단 모드★ — 측정 끝나면 MAX_BIAS_PROBE를 0으로");
+    return;
+#endif
+#if MAX_BIAS_PROBE == 2
+    Serial.println("[MAX31865] ★레지스터 직접 진단 모드★ — 온도 측정 정지, [PROBE] 로그 확인");
+    xTaskCreatePinnedToCore(rawProbeTask, "maxProbe", 4096, nullptr, 1, nullptr, 0);
+    return;
+#endif
     // Core 0 전용 태스크 — MAX31865 SPI를 모터 코어(Core 1)와 분리
     xTaskCreatePinnedToCore(taskTrampoline, "tempTask", 4096, this, 1, nullptr, 0);
 }
@@ -144,7 +214,7 @@ void TemperatureSensor::taskLoop() {
         //   raw 0x0000(SDO LOW 고정) / 0x7FFF(SDO HIGH·floating) → 미통신(배선/전원)
         //   raw 중간값 + fault → 실제 RTD 단선/단락 또는 임계값 초과
         uint16_t raw = _sensor.readRTD();
-        const float ohm = raw * Cfg::RREF / 32768.0f;                 // 보정 전 저항
+        const float ohm = raw * rref() / 32768.0f;                 // 보정 전 저항
         float    t   = ohmToCelsius(_calGain * ohm + _calOffset);         // 보정 후 온도
         uint8_t  f   = _sensor.readFault();
         const bool noComm = (raw == 0x0000 || raw == 0x7FFF);
